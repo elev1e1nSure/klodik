@@ -1,0 +1,8 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+litellm>=1.57
+websockets>=14
+pytest>=8
+pytest-asyncio>=0.25
+httpx>=0.28
+pyautogui>=0.9
