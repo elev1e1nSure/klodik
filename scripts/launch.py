@@ -78,6 +78,7 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "description": "Groq Cloud — blazing fast inference",
         "models": [
             "groq/llama-3.3-70b-versatile",
+            "groq/llama-3.1-405b-reasoning",
             "groq/llama-3.1-8b-instant",
             "groq/mixtral-8x7b-32768",
             "groq/gemma2-9b-it",
@@ -85,33 +86,39 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "key_env": "GROQ_API_KEY",
         "key_hint": "https://console.groq.com/keys",
         "needs_key": True,
+        "auto_model": "groq/llama-3.3-70b-versatile",
     },
     "openai": {
         "icon": "🌐",
         "color": "bold bright_green",
-        "description": "OpenAI — GPT-4o, GPT-4o-mini",
+        "description": "OpenAI — GPT-4o, o1, o3-mini",
         "models": [
             "gpt-4o",
             "gpt-4o-mini",
+            "o1",
+            "o1-mini",
+            "o3-mini",
             "gpt-4-turbo",
-            "gpt-3.5-turbo",
         ],
         "key_env": "OPENAI_API_KEY",
         "key_hint": "https://platform.openai.com/api-keys",
         "needs_key": True,
+        "auto_model": "gpt-4o",
     },
     "gemini": {
         "icon": "💎",
         "color": "bold bright_blue",
-        "description": "Google Gemini — 1.5 Pro / Flash",
+        "description": "Google Gemini — 2.0 Flash / Pro",
         "models": [
-            "gemini/gemini-1.5-pro",
+            "gemini/gemini-2.0-flash",
+            "gemini/gemini-2.0-pro",
             "gemini/gemini-1.5-flash",
-            "gemini/gemini-1.5-pro-latest",
+            "gemini/gemini-1.5-pro",
         ],
         "key_env": "GEMINI_API_KEY",
         "key_hint": "https://aistudio.google.com/app/apikey",
         "needs_key": True,
+        "auto_model": "gemini/gemini-2.0-flash",
     },
     "openrouter": {
         "icon": "🔀",
@@ -121,9 +128,7 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "key_env": "OPENROUTER_API_KEY",
         "key_hint": "https://openrouter.ai/keys",
         "needs_key": True,
-        "auto_model": "meta-llama/llama-3.3-70b-instruct",
-        "fetch_url": "https://openrouter.ai/api/v1/models",
-        "model_prefix": "",
+        "auto_model": "openrouter/meta-llama/llama-3.3-70b-instruct",
     },
     "ollama": {
         "icon": "🦙",
@@ -281,7 +286,8 @@ def _fetch_provider_models(provider: str, api_key: str) -> list[str]:
                 timeout=5,
             )
             r.raise_for_status()
-            return [m["id"] for m in r.json().get("data", []) if m.get("id")]
+            raw = [m["id"] for m in r.json().get("data", []) if m.get("id")]
+            return [f"openrouter/{m}" for m in raw]
     except Exception:
         return []
     return []

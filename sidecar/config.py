@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     provider: str = Field(
         default="groq",
         alias="PROVIDER",
-        description="LLM provider: groq, openai, gemini, ollama",
+        description="LLM provider: groq, openai, gemini, openrouter, ollama",
     )
     model: str = Field(
         default="groq/llama-3.3-70b-versatile",
