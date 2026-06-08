@@ -789,8 +789,8 @@ def _show_menu(env: dict[str, str]) -> str | None:
         Text.assemble(("[ 2 ]", "bold cyan"), "  ⚙️  ", _t("configure", lang)),
         Text.assemble(("[ 3 ]", "bold cyan"), "  🌐  ", _t("language", lang)),
         Text.assemble(("[ 4 ]", "bold cyan"), "  🧠  ", _t("db_manage", lang)),
-        Text.assemble(("[ 5 ]", "bold cyan"), "  �  ", _t("api_key_menu", lang)),
-        Text.assemble(("[ 6 ]", "bold cyan"), "  �  ", _t("exit", lang)),
+        Text.assemble(("[ 5 ]", "bold cyan"), "  *   ", _t("api_key_menu", lang)),
+        Text.assemble(("[ 6 ]", "bold cyan"), "  <-  ", _t("exit", lang)),
     ]
 
     config_line = (
