@@ -5,31 +5,43 @@ use tauri::Manager;
 use tauri::path::BaseDirectory;
 
 #[cfg(windows)]
+#[allow(dead_code)]
 mod win32 {
     use std::ffi::c_void;
 
     pub const GWL_STYLE: i32 = -16;
     pub const GWL_EXSTYLE: i32 = -20;
 
-    pub const WS_POPUP: i32 = -0x80000000i32; // 0x80000000 as i32
     pub const WS_BORDER: i32 = 0x00800000;
-    pub const WS_DLGFRAME: i32 = 0x00400000;
+    pub const WS_CAPTION: i32 = 0x00C00000;
     pub const WS_THICKFRAME: i32 = 0x00040000;
-    pub const WS_CAPTION: i32 = WS_DLGFRAME | WS_BORDER;
-    pub const WS_CLIPCHILDREN: i32 = 0x02000000;
-    pub const WS_CLIPSIBLINGS: i32 = 0x04000000;
-    pub const WS_VISIBLE: i32 = 0x10000000;
+    pub const WS_DLGFRAME: i32 = 0x00400000;
+    pub const WS_SYSMENU: i32 = 0x00080000;
 
     pub const WS_EX_TOOLWINDOW: i32 = 0x00000080;
+    pub const WS_EX_NOACTIVATE: i32 = 0x08000000;
+
+    pub const DWMWA_BORDER_COLOR: u32 = 34;
+    pub const DWMWA_COLOR_NONE: u32 = 0xFFFFFFFE;
+    pub const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    pub const DWMWCP_DONOTROUND: u32 = 1;
+    pub const DWMWA_NCRENDERING_POLICY: u32 = 2;
+    pub const DWMNCRP_DISABLED: u32 = 2;
 
     extern "system" {
-        pub fn SetWindowLongPtrW(hwnd: *mut c_void, nIndex: i32, dwNewLong: isize) -> isize;
         pub fn GetWindowLongPtrW(hwnd: *mut c_void, nIndex: i32) -> isize;
+        pub fn SetWindowLongPtrW(hwnd: *mut c_void, nIndex: i32, dwNewLong: isize) -> isize;
         pub fn SetWindowPos(
             hwnd: *mut c_void,
             hwndInsertAfter: *mut c_void,
             x: i32, y: i32, cx: i32, cy: i32,
             uFlags: u32,
+        ) -> i32;
+        pub fn DwmSetWindowAttribute(
+            hwnd: *mut c_void,
+            dwAttribute: u32,
+            pvAttribute: *const c_void,
+            cbAttribute: u32,
         ) -> i32;
     }
 
@@ -47,31 +59,29 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
-                // Remove shadow/border on Windows: force WS_POPUP + WS_EX_TOOLWINDOW
                 #[cfg(windows)]
                 {
                     if let Ok(hwnd) = window.hwnd() {
                         let hwnd_ptr = hwnd.0 as *mut std::ffi::c_void;
                         unsafe {
-                            // 1) Strip all frame styles from GWL_STYLE, keep only popup + visible + clip
+                            // 1) Strip all window border styles (this removes the white frame)
                             let style = win32::GetWindowLongPtrW(hwnd_ptr, win32::GWL_STYLE);
-                            let new_style = (style
+                            let new_style = style
                                 & !(win32::WS_BORDER
-                                    | win32::WS_DLGFRAME
+                                    | win32::WS_CAPTION
                                     | win32::WS_THICKFRAME
-                                    | win32::WS_CAPTION) as isize)
-                                | (win32::WS_POPUP | win32::WS_VISIBLE | win32::WS_CLIPCHILDREN | win32::WS_CLIPSIBLINGS) as isize;
+                                    | win32::WS_DLGFRAME
+                                    | win32::WS_SYSMENU) as isize;
                             win32::SetWindowLongPtrW(hwnd_ptr, win32::GWL_STYLE, new_style);
 
-                            // 2) Add WS_EX_TOOLWINDOW to extended style
+                            // 2) Toolwindow + no-activate in exstyle
                             let exstyle = win32::GetWindowLongPtrW(hwnd_ptr, win32::GWL_EXSTYLE);
-                            win32::SetWindowLongPtrW(
-                                hwnd_ptr,
-                                win32::GWL_EXSTYLE,
-                                exstyle | win32::WS_EX_TOOLWINDOW as isize,
-                            );
+                            let new_exstyle = exstyle
+                                | win32::WS_EX_TOOLWINDOW as isize
+                                | win32::WS_EX_NOACTIVATE as isize;
+                            win32::SetWindowLongPtrW(hwnd_ptr, win32::GWL_EXSTYLE, new_exstyle);
 
-                            // 3) Force frame recalculation
+                            // 3) Apply frame changes without moving/resizing
                             win32::SetWindowPos(
                                 hwnd_ptr,
                                 std::ptr::null_mut(),
@@ -82,6 +92,33 @@ pub fn run() {
                                     | win32::SWP_NOZORDER
                                     | win32::SWP_NOACTIVATE
                                     | win32::SWP_SHOWWINDOW,
+                            );
+
+                            // 4) Remove DWM accent border (Windows 11)
+                            let border_color = win32::DWMWA_COLOR_NONE;
+                            let _ = win32::DwmSetWindowAttribute(
+                                hwnd_ptr,
+                                win32::DWMWA_BORDER_COLOR,
+                                &border_color as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
+                            );
+
+                            // 5) Disable rounded corners (Windows 11)
+                            let corner = win32::DWMWCP_DONOTROUND;
+                            let _ = win32::DwmSetWindowAttribute(
+                                hwnd_ptr,
+                                win32::DWMWA_WINDOW_CORNER_PREFERENCE,
+                                &corner as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
+                            );
+
+                            // 6) Disable DWM non-client rendering (shadow/border)
+                            let policy = win32::DWMNCRP_DISABLED;
+                            let _ = win32::DwmSetWindowAttribute(
+                                hwnd_ptr,
+                                win32::DWMWA_NCRENDERING_POLICY,
+                                &policy as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
                             );
                         }
                     }

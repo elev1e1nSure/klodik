@@ -43,9 +43,11 @@
 │  ├── /health                        │
 │  ├── /ws  (WebSocket endpoint)      │
 │  │   └── agent_loop()              │
-│  │       ├── Groq chat.completions  │
+│  │       ├── litellm completion     │
 │  │       ├── Memory (SQLite)        │
 │  │       └── execute_tool()         │
+│  ├── connection.py (WebSocket mgr)  │
+│  ├── log.py (colored logging)       │
 │  └── TOOLS: terminal, read_file,   │
 │      write_file, search, mkdir,      │
 │      list_dir, move_file, move_mouse,│
@@ -85,7 +87,8 @@ klodik/
 ├── src/                          # Frontend (React + TS)
 │   ├── components/
 │   │   ├── Agent.tsx             # Главный компонент: спрайт, input, bubble
-│   │   └── Agent.test.tsx        # Тесты Agent
+│   │   ├── Agent.test.tsx        # Тесты Agent
+│   │   └── ErrorBoundary.tsx     # Обработка ошибок React
 │   ├── hooks/
 │   │   ├── useWebSocket.ts       # Хук для WS-соединения
 │   │   └── useWebSocket.test.ts  # Тесты WS
@@ -107,8 +110,10 @@ klodik/
 │   ├── config.py                 # Pydantic Settings (GROQ_API_KEY, MODEL, ...)
 │   ├── main.py                   # Entry point (uvicorn)
 │   ├── server.py                 # FastAPI app + WebSocket endpoint
+│   ├── connection.py             # ConnectionManager (разрыв цикла server↔agent)
 │   ├── agent.py                  # Agent loop + initiative_loop
 │   ├── memory.py                 # SQLite Memory
+│   ├── log.py                    # Структурированный цветной логгер
 │   ├── tools/
 │   │   ├── __init__.py           # Auto-discovery
 │   │   ├── base.py               # Tool decorators
@@ -124,7 +129,7 @@ klodik/
 │   ├── dev.cjs                   # Единый скрипт запуска sidecar + tauri
 │   └── launch.py                 # Красивый лаунчер с выбором провайдера и модели
 ├── public/
-│   ├── claude.svg                # Статичный спрайт
+│   ├── claude.png                # Статичный спрайт
 │   └── claude_animated.lottie   # Анимированный спрайт
 ├── AGENTS.md                     # Этот файл
 ├── README.md                     # Описание проекта (EN)
@@ -183,11 +188,13 @@ klodik/
 ## 8. Frontend правила
 
 - `Agent.tsx` — единственный визуальный компонент
+- `ErrorBoundary.tsx` — обработка ошибок React
 - `data-tauri-drag-region` — на корневом div для drag окна
 - `data-tauri-no-drag` — на input/form
 - WebSocket URL: `ws://localhost:8765/ws`
 - Импорты React — через `from "react"`
 - Ответный пузырь: появляется над input, плавно исчезает через N секунд
+- Placeholder и сообщения ошибок — на русском
 
 ---
 
@@ -196,6 +203,14 @@ klodik/
 - `tauri.conf.json` — валидировать после изменений
 - Окно: `transparent`, `decorations: false`, `skipTaskbar: true`, `alwaysOnTop: true`
 - Поле `shadow` запрещено в Tauri v2 — не использовать
+- **Удаление border/shadow на Windows** — делается через Win32 API в `setup` хуке `lib.rs`:
+  - `SetWindowLongPtrW(GWL_STYLE)` — убирает `WS_BORDER/WS_DLGFRAME/WS_THICKFRAME`, оставляет `WS_POPUP`
+  - `SetWindowLongPtrW(GWL_EXSTYLE)` — добавляет `WS_EX_TOOLWINDOW`
+  - `DwmSetWindowAttribute(DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED)` — отключает DWM rendering
+  - `DwmSetWindowAttribute(DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE)` — убирает accent border
+  - `DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND)` — убирает закругление
+  - `SetWindowPos(SWP_FRAMECHANGED)` — форсирует пересчёт рамки
+- **НЕЛЬЗЯ** возвращать `shadow` или любой другой border в конфиг или код
 
 ---
 

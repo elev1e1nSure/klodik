@@ -41,7 +41,8 @@
 │  ┌─────────────────────────────┐    │
 │  │  React 19 + Tailwind v4    │    │
 │  │  ├── Agent.tsx (sprite)    │    │
-│  │  └── useWebSocket.ts       │    │
+│  │  ├── useWebSocket.ts       │    │
+│  │  └── ErrorBoundary.tsx      │    │
 │  └─────────────────────────────┘    │
 └──────────────┬────────────────────────┘
                │ WebSocket  ws://localhost:8765
@@ -50,9 +51,11 @@
 │  Python Sidecar (FastAPI + uvicorn) │
 │  ├── WebSocket /ws                  │
 │  │   └── agent_loop()              │
-│  │       ├── Groq API              │
+│  │       ├── LLM (litellm)         │
 │  │       ├── SQLite Memory         │
 │  │       └── 15+ Tools             │
+│  ├── connection.py (WS manager)     │
+│  ├── log.py (colored logging)       │
 │  └── /health                        │
 └─────────────────────────────────────┘
                │
@@ -146,6 +149,9 @@ klodik/
 ├── src/               # React frontend
 ├── src-tauri/         # Tauri (Rust) desktop shell
 ├── sidecar/           # Python backend (FastAPI + agent)
+│   ├── connection.py  # WebSocket connection manager
+│   ├── log.py         # Structured colored logging
+│   └── tools/         # Tool registry & implementations
 ├── scripts/           # dev.cjs — unified launch script
 ├── public/            # Sprites and assets
 └── AGENTS.md          # Project rules & conventions
