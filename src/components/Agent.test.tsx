@@ -10,6 +10,7 @@ vi.mock("../hooks/useWebSocket", () => ({
     connected: true,
     status: "idle",
     lastMessage: "",
+    lastError: "",
     sendTask: mockSendTask,
   })),
 }));
@@ -75,6 +76,7 @@ describe("Agent", () => {
       connected: true,
       status: "thinking",
       lastMessage: "",
+      lastError: "",
       sendTask: localSendTask,
     }));
     const { container } = render(<Agent wsUrl="ws://test" />);
@@ -87,7 +89,7 @@ describe("Agent", () => {
 
   it("renders sprite image when idle", () => {
     render(<Agent wsUrl="ws://test" />);
-    const img = screen.getByAltText("Claude Agent");
+    const img = screen.getByAltText("Клодик");
     expect(img).toBeInTheDocument();
     expect(img).toHaveAttribute("src", "/claude.png");
   });
@@ -97,6 +99,7 @@ describe("Agent", () => {
       connected: true,
       status: "working",
       lastMessage: "",
+      lastError: "",
       sendTask: mockSendTask,
     } as ReturnType<typeof useWebSocket>);
     render(<Agent wsUrl="ws://test" />);
@@ -108,10 +111,11 @@ describe("Agent", () => {
       connected: true,
       status: "thinking",
       lastMessage: "",
+      lastError: "",
       sendTask: mockSendTask,
     } as ReturnType<typeof useWebSocket>);
     render(<Agent wsUrl="ws://test" />);
-    const img = screen.getByAltText("Claude Agent");
+    const img = screen.getByAltText("Клодик");
     expect(img).toHaveClass("animate-agent-thinking");
   });
 
@@ -120,6 +124,7 @@ describe("Agent", () => {
       connected: true,
       status: "idle",
       lastMessage: "hello user",
+      lastError: "",
       sendTask: mockSendTask,
     } as ReturnType<typeof useWebSocket>);
     render(<Agent wsUrl="ws://test" />);
