@@ -17,7 +17,7 @@ def _now() -> str:
 
 
 def _out(level: str, color: str, msg: str) -> None:
-    print(f"{color}[{_now()}] {_BOLD}[{level}]{_RESET} {color}{msg}{_RESET}")
+    print(f"{color}[{_now()}] {_BOLD}[{level}]{_RESET} {color}{msg}{_RESET}", flush=True)
 
 
 def info(msg: str) -> None:
