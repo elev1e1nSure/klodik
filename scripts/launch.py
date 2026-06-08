@@ -457,6 +457,7 @@ def _launch_app(py: Path, env: dict[str, str]) -> bool:
             return False
 
     # 2) Start sidecar
+    sidecar_env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
     try:
         sidecar = subprocess.Popen(
             [str(py), str(SIDECAR_DIR / "main.py")],
@@ -466,6 +467,7 @@ def _launch_app(py: Path, env: dict[str, str]) -> bool:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=sidecar_env,
         )
     except Exception as e:
         console.print(f"[red]{_t('launch_failed', lang)}: {e}[/]")
@@ -512,8 +514,14 @@ def _launch_app(py: Path, env: dict[str, str]) -> bool:
 
     import queue
     import threading
+    import re
 
     log_queue: queue.Queue = queue.Queue()
+
+    _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+    def _strip_ansi(s: str) -> str:
+        return _ANSI_RE.sub("", s)
 
     def _reader(proc: subprocess.Popen, tag: str) -> None:
         try:
@@ -529,17 +537,21 @@ def _launch_app(py: Path, env: dict[str, str]) -> bool:
         while True:
             try:
                 tag, line = log_queue.get(timeout=0.1)
-                stripped = line.rstrip()
+                stripped = _strip_ansi(line.rstrip())
                 if tag == "sidecar":
-                    if "rate limit" in stripped.lower() or "429" in stripped:
-                        console.print(f"[yellow][sidecar] {_t('rate_limit', lang)}[/]")
-                        continue
-                    if "Traceback (most recent call last):" in stripped or "ERROR:" in stripped or "Exception in ASGI" in stripped:
-                        console.print(f"[red][sidecar] {stripped}[/]")
-                        continue
                     console.print(f"[cyan][sidecar][/] {stripped}")
                 else:
-                    console.print(f"[magenta][tauri][/] {stripped}")
+                    # Tauri: show only errors / build finished / app running
+                    lower = stripped.lower()
+                    if "warning:" in lower:
+                        console.print(f"[yellow][tauri] {stripped}[/]")
+                    elif any(k in lower for k in ("error", "failed", "panic", "compile error")):
+                        console.print(f"[red][tauri] {stripped}[/]")
+                    elif "finished" in lower and "dev" in lower:
+                        console.print(f"[green][tauri] Build finished — running[/]")
+                    elif "running" in lower and "klodik.exe" in lower:
+                        console.print(f"[green][tauri] App started[/]")
+                    # Suppress all other tauri noise (Vite, cargo progress, etc.)
             except queue.Empty:
                 pass
 
@@ -737,6 +749,19 @@ def _show_menu(env: dict[str, str]) -> str | None:
     model = env.get("MODEL", "—")
     preset = PROVIDER_PRESETS.get(provider, {})
 
+    sprite = Text(
+        r"""⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⡿⠿⣿⣿⣿⣿⣿⣿⣿⠿⢿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⡁⠀⢸⣿⣿⣿⣿⣿⣇⠀⠀⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⣶⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣶⣶⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠙⠛⠛⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠛⠛⠛⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠿⣿⣿⡿⠿⠿⣿⣿⡿⢿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⣿⣿⡇⠀⠀⣿⣿⡇⢸⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠘⠛⠛⠀⠛⠛⠃⠀⠀⠛⠛⠃⠘⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀""",
+        style="bold bright_cyan",
+    )
+
     table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
     table.add_column("#", justify="center", style="bold cyan")
     table.add_column("Option")
@@ -751,8 +776,8 @@ def _show_menu(env: dict[str, str]) -> str | None:
         f"[dim]{_t('model', lang)}:[/] {model}"
     )
     console.print(Panel(
-        table,
-        title=f"[bold]{_t('menu_title', lang)}[/]  ·  {config_line}",
+        Group(sprite, table),
+        title=f"[bold]🤖 {_t('menu_title', lang)}[/]  ·  {config_line}",
         border_style="bright_cyan",
         padding=(0, 2),
     ))
@@ -793,7 +818,6 @@ def _switch_language(env: dict[str, str]) -> dict[str, str] | None:
 
 
 def main() -> None:
-    _show_welcome()
     _render_prerequisites()
 
     env = _load_env()

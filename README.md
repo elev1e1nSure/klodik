@@ -80,8 +80,8 @@
 
 ```bash
 # Clone
-git clone https://github.com/yourname/claude-agent.git
-cd claude-agent
+git clone https://github.com/yourname/klodik.git
+cd klodik
 
 # JS dependencies
 pnpm install
