@@ -129,8 +129,7 @@ klodik/
 │   ├── dev.cjs                   # Единый скрипт запуска sidecar + tauri
 │   └── launch.py                 # Красивый лаунчер с выбором провайдера и модели
 ├── public/
-│   ├── app-icon.png              # Иконка / спрайт
-│   └── claude_animated.lottie   # Анимированный спрайт
+│   └── app-icon.png              # Иконка / спрайт
 ├── AGENTS.md                     # Этот файл
 ├── README.md                     # Описание проекта (EN)
 ├── README.ru.md                  # Описание проекта (RU)
@@ -246,7 +245,7 @@ pnpm dev:all
 ### Коммитить
 - Исходный код (`src/`, `src-tauri/`, `sidecar/`)
 - Тесты, конфиги, `AGENTS.md`, `README.md`
-- `public/claude.svg`, `public/claude_animated.lottie`
+- `public/claude.svg`
 
 ### НЕ коммитить
 - `node_modules/`, `.venv/`, `target/`, `dist/`, `build/`

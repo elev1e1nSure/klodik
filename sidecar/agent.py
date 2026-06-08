@@ -94,8 +94,15 @@ async def agent_loop(task: str, websocket: Any):
 
     def _build_completion_kwargs() -> dict[str, Any]:
         """Build kwargs for litellm.completion based on provider."""
+        model = settings.model
+        p = settings.provider.lower()
+
+        # Guard: Gemini models MUST have gemini/ prefix for AI Studio routing
+        if p == "gemini" and not model.startswith("gemini/"):
+            model = f"gemini/{model}"
+
         kwargs: dict[str, Any] = {
-            "model": settings.model,
+            "model": model,
             "messages": messages,
             "temperature": settings.temperature,
             "max_tokens": settings.max_tokens,
@@ -103,7 +110,6 @@ async def agent_loop(task: str, websocket: Any):
         if not tools_disabled:
             kwargs["tools"] = registry.schemas
             kwargs["tool_choice"] = "auto"
-        p = settings.provider.lower()
         if p == "groq":
             kwargs["api_key"] = settings.groq_api_key
         elif p == "openai":
@@ -115,6 +121,8 @@ async def agent_loop(task: str, websocket: Any):
             kwargs["api_base"] = settings.openrouter_base_url
         elif p == "ollama":
             kwargs["api_base"] = settings.ollama_base_url
+
+        debug(f"[llm] provider={p} model={model} key_set={bool(kwargs.get('api_key'))}")
         return kwargs
 
     try:

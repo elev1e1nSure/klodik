@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { Send } from "lucide-react";
 import { useWebSocket } from "../hooks/useWebSocket";
-import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 
 interface AgentProps {
   wsUrl?: string;
@@ -89,30 +88,21 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
         </div>
       </form>
 
-      {/* Sprite — Lottie при работе, пиксель-арт только при idle */}
+      {/* Sprite */}
       <div className="relative w-[166px] h-[166px]">
         <img
           src="/app-icon.png"
           alt="Клодик"
-          className={`absolute inset-0 w-full h-full image-pixelated transition-opacity duration-300 ${
-            isBusy ? "opacity-0" : "opacity-100"
-          } ${!isBusy && (isThinking ? "animate-agent-thinking" : "animate-agent-idle")}`}
+          className={`w-full h-full image-pixelated ${
+            isWorking
+              ? "animate-agent-working"
+              : isThinking
+                ? "animate-agent-thinking"
+                : "animate-agent-idle"
+          }`}
           draggable={false}
           data-tauri-drag-region
         />
-        <div
-          className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 ${
-            isBusy ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-          }`}
-        >
-          <DotLottieReact
-            src="/claude_animated.lottie"
-            autoplay
-            loop
-            style={{ width: 166, height: 166 }}
-            data-tauri-drag-region
-          />
-        </div>
       </div>
     </div>
   );

@@ -19,9 +19,6 @@ vi.mock("lucide-react", () => ({
   Send: vi.fn(() => <svg data-testid="send-icon" />),
 }));
 
-vi.mock("@lottiefiles/dotlottie-react", () => ({
-  DotLottieReact: vi.fn(() => <div data-testid="lottie-player" />),
-}));
 
 describe("Agent", () => {
   beforeEach(() => {
@@ -91,10 +88,10 @@ describe("Agent", () => {
     render(<Agent wsUrl="ws://test" />);
     const img = screen.getByAltText("Клодик");
     expect(img).toBeInTheDocument();
-    expect(img).toHaveAttribute("src", "/claude.png");
+    expect(img).toHaveAttribute("src", "/app-icon.png");
   });
 
-  it("renders lottie player when working", () => {
+  it("renders working animation when working", () => {
     vi.mocked(useWebSocket).mockReturnValueOnce({
       connected: true,
       status: "working",
@@ -103,7 +100,8 @@ describe("Agent", () => {
       sendTask: mockSendTask,
     } as ReturnType<typeof useWebSocket>);
     render(<Agent wsUrl="ws://test" />);
-    expect(screen.getByTestId("lottie-player")).toBeInTheDocument();
+    const img = screen.getByAltText("Клодик");
+    expect(img).toHaveClass("animate-agent-working");
   });
 
   it("renders thinking animation when thinking", () => {
