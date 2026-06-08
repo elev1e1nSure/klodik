@@ -50,6 +50,16 @@ class Settings(BaseSettings):
         alias="GEMINI_API_KEY",
         description="Google Gemini API key",
     )
+    openrouter_api_key: str | None = Field(
+        default=None,
+        alias="OPENROUTER_API_KEY",
+        description="OpenRouter API key",
+    )
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        alias="OPENROUTER_BASE_URL",
+        description="OpenRouter API base URL",
+    )
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         alias="OLLAMA_BASE_URL",
@@ -97,6 +107,9 @@ class Settings(BaseSettings):
         elif p == "gemini":
             if not self.gemini_api_key:
                 raise ValueError("GEMINI_API_KEY is required for provider 'gemini'")
+        elif p == "openrouter":
+            if not self.openrouter_api_key:
+                raise ValueError("OPENROUTER_API_KEY is required for provider 'openrouter'")
         elif p == "ollama":
             if not self.model.startswith("ollama/"):
                 self.model = f"ollama/{self.model}"

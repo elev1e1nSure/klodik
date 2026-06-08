@@ -113,6 +113,18 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "key_hint": "https://aistudio.google.com/app/apikey",
         "needs_key": True,
     },
+    "openrouter": {
+        "icon": "🔀",
+        "color": "bold bright_white",
+        "description": "OpenRouter — 100+ models via one key",
+        "models": [],
+        "key_env": "OPENROUTER_API_KEY",
+        "key_hint": "https://openrouter.ai/keys",
+        "needs_key": True,
+        "auto_model": "meta-llama/llama-3.3-70b-instruct",
+        "fetch_url": "https://openrouter.ai/api/v1/models",
+        "model_prefix": "",
+    },
     "ollama": {
         "icon": "🦙",
         "color": "bold bright_yellow",
@@ -235,6 +247,44 @@ def _fetch_ollama_models(base_url: str = "http://localhost:11434") -> list[str]:
         return [f"ollama/{m}" for m in models if m]
     except Exception:
         return []
+
+
+def _fetch_provider_models(provider: str, api_key: str) -> list[str]:
+    """Fetch live model list from provider API."""
+    if requests is None:
+        return []
+    try:
+        if provider == "groq":
+            r = requests.get(
+                "https://api.groq.com/openai/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=5,
+            )
+            r.raise_for_status()
+            return [m["id"] for m in r.json().get("data", []) if m.get("id")]
+        elif provider == "openai":
+            r = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=5,
+            )
+            r.raise_for_status()
+            # Filter to chat models
+            return sorted(
+                [m["id"] for m in r.json().get("data", [])
+                 if m.get("id", "").startswith("gpt-")],
+                reverse=True,
+            )
+        elif provider == "openrouter":
+            r = requests.get(
+                "https://openrouter.ai/api/v1/models",
+                timeout=5,
+            )
+            r.raise_for_status()
+            return [m["id"] for m in r.json().get("data", []) if m.get("id")]
+    except Exception:
+        return []
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -384,39 +434,8 @@ def _select_provider(env: dict[str, str]) -> dict[str, str] | None:
     preset = PROVIDER_PRESETS[provider]
     console.print(f"\n[bold]{preset['icon']} Selected:[/] [{preset['color']}]{provider}[/]\n")
 
-    # Pick model
-    models = preset["models"].copy()
-    if provider == "ollama":
-        with console.status("[yellow]Checking local Ollama...[/]"):
-            ollama_models = _fetch_ollama_models(env.get("OLLAMA_BASE_URL", "http://localhost:11434"))
-        if ollama_models:
-            models = ollama_models
-        else:
-            console.print("[yellow]⚠ Ollama not detected on localhost:11434.[/]")
-            console.print("[dim]Enter a model name manually (e.g. ollama/llama3)[/]")
-            models = []
-
-    if models:
-        model_table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-        model_table.add_column("#", justify="right")
-        model_table.add_column(_t("model", lang))
-        for i, m in enumerate(models, 1):
-            model_table.add_row(f"[ {i} ]", m)
-        model_table.add_row("[ 0 ]", _t("back", lang))
-        console.print(model_table)
-        console.print()
-        model_choice = Prompt.ask(
-            _t("select_model", lang),
-            choices=[str(i) for i in range(0, len(models) + 1)],
-            default="1",
-        )
-        if model_choice == "0":
-            return None
-        model = models[int(model_choice) - 1]
-    else:
-        model = Prompt.ask("Model name", default="ollama/llama3")
-
-    # API key
+    # API key first
+    api_key = ""
     if preset["needs_key"]:
         key_env = preset["key_env"]
         current_key = env.get(key_env, "")
@@ -425,13 +444,63 @@ def _select_provider(env: dict[str, str]) -> dict[str, str] | None:
             console.print(f"[dim]Current {key_env}: {masked}[/]")
         else:
             console.print(f"[yellow]⚠ {key_env} not set.[/]")
+            hint = preset.get("key_hint", "")
+            if hint:
+                console.print(f"[dim]Get it at: {hint}[/]")
         new_key = Prompt.ask(
-            _t("api_key_prompt", lang),
+            _t("api_key_paste", lang),
             password=True,
-            default=current_key,
+            default="",
         )
         if new_key:
             env[key_env] = new_key
+            api_key = new_key
+        else:
+            api_key = current_key
+
+    # Fetch models from API (if supported)
+    models: list[str] = []
+    auto_model = preset.get("auto_model", "")
+    if provider in ("groq", "openai", "openrouter") and api_key:
+        with console.status(f"[yellow]{_t('fetching_models', lang)}[/]"):
+            models = _fetch_provider_models(provider, api_key)
+    elif provider == "gemini":
+        models = preset["models"].copy()
+    elif provider == "ollama":
+        with console.status("[yellow]Checking local Ollama...[/]"):
+            models = _fetch_ollama_models(env.get("OLLAMA_BASE_URL", "http://localhost:11434"))
+        if not models:
+            console.print("[yellow]⚠ Ollama not detected on localhost:11434.[/]")
+
+    # Show model picker: [0] Auto-select + numbered list
+    if models:
+        model_table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+        model_table.add_column("#", justify="right")
+        model_table.add_column(_t("model", lang))
+        model_table.add_row("[ 0 ]", f"[green]{_t('auto_select', lang)}[/] ({auto_model or models[0]})")
+        for i, m in enumerate(models[:20], 1):  # cap at 20
+            label = m
+            if len(label) > 50:
+                label = label[:47] + "..."
+            model_table.add_row(f"[ {i} ]", label)
+        console.print(model_table)
+        console.print()
+        model_choice = Prompt.ask(
+            _t("select_model", lang),
+            choices=[str(i) for i in range(0, min(len(models), 20) + 1)],
+            default="0",
+        )
+        if model_choice == "0":
+            # Auto-select
+            model = auto_model if auto_model else models[0]
+        else:
+            model = models[int(model_choice) - 1]
+    else:
+        # Fallback: manual entry
+        default_model = auto_model or preset.get("models", [""])[0] or "ollama/llama3"
+        model = Prompt.ask("Model name", default=default_model)
+
+    console.print(f"[green]{_t('model_picked', lang)}:[/] [bold]{model}[/]\n")
 
     # Temperature / max_tokens (optional quick config)
     if Confirm.ask(f"[dim]{_t('adjust_params', lang)}[/]", default=False):
@@ -631,6 +700,9 @@ _TEXTS: dict[str, dict[str, str]] = {
         "api_key_current": "Current key",
         "api_key_paste": "Paste API key",
         "api_key_saved": "API key saved",
+        "auto_select": "Auto-select best model",
+        "fetching_models": "Fetching models from API...",
+        "model_picked": "Selected model",
         "invalid_choice": "Invalid choice. Try again.",
     },
     "ru": {
@@ -685,6 +757,9 @@ _TEXTS: dict[str, dict[str, str]] = {
         "api_key_current": "Текущий ключ",
         "api_key_paste": "Вставь API-ключ",
         "api_key_saved": "Ключ сохранён",
+        "auto_select": "Авто-выбор лучшей модели",
+        "fetching_models": "Загружаю модели из API...",
+        "model_picked": "Выбрана модель",
         "invalid_choice": "Неверный выбор. Попробуй ещё.",
     },
 }
