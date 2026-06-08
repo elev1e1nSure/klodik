@@ -8,42 +8,29 @@ use tauri::path::BaseDirectory;
 mod win32 {
     use std::ffi::c_void;
 
+    pub const GWL_EXSTYLE: i32 = -20;
+    pub const WS_EX_TOOLWINDOW: i32 = 0x00000080;
+
     pub const DWMWA_BORDER_COLOR: u32 = 34;
     pub const DWMWA_COLOR_NONE: u32 = 0xFFFFFFFE;
     pub const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
     pub const DWMWCP_DONOTROUND: u32 = 1;
-    pub const DWMWA_NCRENDERING_POLICY: u32 = 2;
-    pub const DWMNCRP_DISABLED: u32 = 2;
-    pub const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
-    pub const DWMSBT_NONE: u32 = 1;
-    pub const DWMWA_USE_HOST_BACKDROP_BRUSH: u32 = 17;
-    pub const DWMSB_NONE: u32 = 0;
 
     extern "system" {
-        pub fn DwmSetWindowAttribute(
-            hwnd: *mut c_void,
-            dwAttribute: u32,
-            pvAttribute: *const c_void,
-            cbAttribute: u32,
-        ) -> i32;
-        pub fn DwmExtendFrameIntoClientArea(
-            hwnd: *mut c_void,
-            pMarInset: *const MARGINS,
-        ) -> i32;
+        pub fn GetWindowLongPtrW(hwnd: *mut c_void, nIndex: i32) -> isize;
+        pub fn SetWindowLongPtrW(hwnd: *mut c_void, nIndex: i32, dwNewLong: isize) -> isize;
         pub fn SetWindowPos(
             hwnd: *mut c_void,
             hwndInsertAfter: *mut c_void,
             x: i32, y: i32, cx: i32, cy: i32,
             uFlags: u32,
         ) -> i32;
-    }
-
-    #[repr(C)]
-    pub struct MARGINS {
-        pub cxLeftWidth: i32,
-        pub cxRightWidth: i32,
-        pub cyTopHeight: i32,
-        pub cyBottomHeight: i32,
+        pub fn DwmSetWindowAttribute(
+            hwnd: *mut c_void,
+            dwAttribute: u32,
+            pvAttribute: *const c_void,
+            cbAttribute: u32,
+        ) -> i32;
     }
 
     pub const SWP_FRAMECHANGED: u32 = 0x0020;
@@ -64,64 +51,15 @@ pub fn run() {
                     if let Ok(hwnd) = window.hwnd() {
                         let hwnd_ptr = hwnd.0 as *mut std::ffi::c_void;
                         unsafe {
-                            // 1) Remove DWM accent border (Windows 11)
-                            let border_color = win32::DWMWA_COLOR_NONE;
-                            let _ = win32::DwmSetWindowAttribute(
+                            // 1) Add WS_EX_TOOLWINDOW — убирает тень и таскбар
+                            let exstyle = win32::GetWindowLongPtrW(hwnd_ptr, win32::GWL_EXSTYLE);
+                            win32::SetWindowLongPtrW(
                                 hwnd_ptr,
-                                win32::DWMWA_BORDER_COLOR,
-                                &border_color as *const _ as *const _,
-                                std::mem::size_of::<u32>() as u32,
+                                win32::GWL_EXSTYLE,
+                                exstyle | win32::WS_EX_TOOLWINDOW as isize,
                             );
 
-                            // 2) Disable rounded corners (Windows 11)
-                            let corner = win32::DWMWCP_DONOTROUND;
-                            let _ = win32::DwmSetWindowAttribute(
-                                hwnd_ptr,
-                                win32::DWMWA_WINDOW_CORNER_PREFERENCE,
-                                &corner as *const _ as *const _,
-                                std::mem::size_of::<u32>() as u32,
-                            );
-
-                            // 3) Disable DWM shadow / non-client rendering
-                            let policy = win32::DWMNCRP_DISABLED;
-                            let _ = win32::DwmSetWindowAttribute(
-                                hwnd_ptr,
-                                win32::DWMWA_NCRENDERING_POLICY,
-                                &policy as *const _ as *const _,
-                                std::mem::size_of::<u32>() as u32,
-                            );
-
-                            // 4) Disable backdrop (Windows 11 22H2+)
-                            let backdrop = win32::DWMSBT_NONE;
-                            let _ = win32::DwmSetWindowAttribute(
-                                hwnd_ptr,
-                                win32::DWMWA_SYSTEMBACKDROP_TYPE,
-                                &backdrop as *const _ as *const _,
-                                std::mem::size_of::<u32>() as u32,
-                            );
-
-                            // 5) Disable host backdrop brush (Windows 11 22H2+)
-                            let brush = win32::DWMSB_NONE;
-                            let _ = win32::DwmSetWindowAttribute(
-                                hwnd_ptr,
-                                win32::DWMWA_USE_HOST_BACKDROP_BRUSH,
-                                &brush as *const _ as *const _,
-                                std::mem::size_of::<u32>() as u32,
-                            );
-
-                            // 6) Extend client area to remove DWM shadow/frame
-                            let margins = win32::MARGINS {
-                                cxLeftWidth: -1,
-                                cxRightWidth: -1,
-                                cyTopHeight: -1,
-                                cyBottomHeight: -1,
-                            };
-                            let _ = win32::DwmExtendFrameIntoClientArea(
-                                hwnd_ptr,
-                                &margins,
-                            );
-
-                            // 7) Force DWM to recalculate frame
+                            // 2) Force frame recalculation
                             win32::SetWindowPos(
                                 hwnd_ptr,
                                 std::ptr::null_mut(),
@@ -131,6 +69,24 @@ pub fn run() {
                                     | win32::SWP_NOSIZE
                                     | win32::SWP_NOZORDER
                                     | win32::SWP_NOACTIVATE,
+                            );
+
+                            // 3) Remove DWM accent border (Windows 11)
+                            let border_color = win32::DWMWA_COLOR_NONE;
+                            let _ = win32::DwmSetWindowAttribute(
+                                hwnd_ptr,
+                                win32::DWMWA_BORDER_COLOR,
+                                &border_color as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
+                            );
+
+                            // 4) Disable rounded corners (Windows 11)
+                            let corner = win32::DWMWCP_DONOTROUND;
+                            let _ = win32::DwmSetWindowAttribute(
+                                hwnd_ptr,
+                                win32::DWMWA_WINDOW_CORNER_PREFERENCE,
+                                &corner as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
                             );
                         }
                     }
