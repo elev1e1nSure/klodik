@@ -16,10 +16,6 @@
   <img src="public/app-icon.png" width="128" alt="Спрайт Клодика">
 </p>
 
-<p align="center">
-  <img src="screenshots/klodik-idle.png" width="320" alt="Клодик в покое">
-</p>
-
 ---
 
 ## ✨ Возможности
@@ -68,6 +64,12 @@
         │  70B параметров│
         └──────────────┘
 ```
+
+---
+
+<p align="center">
+  <img src="screenshots/klodik-idle.png" width="320" alt="Клодик в покое">
+</p>
 
 ---
 
