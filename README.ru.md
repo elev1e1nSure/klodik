@@ -16,6 +16,11 @@
   <img src="public/app-icon.png" width="128" alt="Спрайт Клодика">
 </p>
 
+<p align="center">
+  <img src="screenshots/klodik-idle.png" width="320" alt="Клодик в покое">
+  <img src="screenshots/klodik-working.png" width="320" alt="Клодик работает">
+</p>
+
 ---
 
 ## ✨ Возможности

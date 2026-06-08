@@ -1,3 +1,4 @@
+
 """FastAPI server with WebSocket endpoint."""
 
 import asyncio

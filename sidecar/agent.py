@@ -37,6 +37,7 @@ SYSTEM_PROMPT = """Ты — Клодик. Компаньон на рабочем
 - Без "я рад помочь", "давайте проверим", "возможно проблема".
 - 1-2 предложения максимум.
 - Можешь быть саркастичным.
+- open_url сам открывает браузер. НЕ вызывай open_app перед open_url.
 """
 
 MAX_TOOL_ITERATIONS = 30
@@ -45,8 +46,8 @@ MAX_TOOL_ITERATIONS = 30
 def _extract_tool_calls_from_content(content: str) -> list[dict[str, Any]]:
     """Extract tool calls from XML-like tags that Llama sometimes emits in content."""
     calls: list[dict[str, Any]] = []
-    # <function=name>{args}</function> or <function=name,{"args"}>
-    pattern = r'<function\s*=\s*([a-zA-Z_]\w*)\s*(?:>(\{.*?\})</function>|,\s*(\{.*?\})\s*>)'
+    # <function=name{args}</function> or <function=name,{"args"}> or <function=name>{"args"}</function>
+    pattern = r'<function\s*=\s*([a-zA-Z_]\w*)\s*(?:(?:,\s*)?(\{.*?\})\s*(?:>|</function>)|>(\{.*?\})</function>)'
     for match in re.finditer(pattern, content, re.DOTALL):
         name = match.group(1)
         args_str = match.group(2) or match.group(3)
@@ -88,16 +89,19 @@ async def agent_loop(task: str, websocket: Any):
         {"role": "user", "content": task},
     ]
 
+    tools_disabled = False
+
     def _build_completion_kwargs() -> dict[str, Any]:
         """Build kwargs for litellm.completion based on provider."""
         kwargs: dict[str, Any] = {
             "model": settings.model,
             "messages": messages,
-            "tools": registry.schemas,
-            "tool_choice": "auto",
             "temperature": settings.temperature,
             "max_tokens": settings.max_tokens,
         }
+        if not tools_disabled:
+            kwargs["tools"] = registry.schemas
+            kwargs["tool_choice"] = "auto"
         p = settings.provider.lower()
         if p == "groq":
             kwargs["api_key"] = settings.groq_api_key
@@ -129,16 +133,64 @@ async def agent_loop(task: str, websocket: Any):
                         json.dumps({"type": "error", "content": ws_msg}),
                         websocket,
                     )
+                elif "tool_use_failed" in err_msg.lower():
+                    # Extract failed_generation from error message
+                    failed_gen = None
+                    try:
+                        err_json = json.loads(err_msg)
+                        failed_gen = err_json.get("error", {}).get("failed_generation")
+                    except json.JSONDecodeError:
+                        failed_match = re.search(r'"failed_generation"\s*:\s*"(.*?)"', err_msg, re.DOTALL)
+                        if failed_match:
+                            raw = failed_match.group(1)
+                            failed_gen = raw.replace('\\"', '"').replace('\\\\', '\\')
+                    if failed_gen:
+                        failed_gen = failed_gen.encode().decode("unicode_escape")
+                        extracted = _extract_tool_calls_from_content(failed_gen)
+                        if extracted:
+                            warn("Groq tool_use_failed — executing tool call from error")
+                            for i, tc in enumerate(extracted):
+                                fn_name = tc["name"]
+                                fn_args = tc["arguments"]
+                                args_summary = " ".join(f"{k}={v!r}" for k, v in fn_args.items())
+                                agent(f"[{iteration}] 🛠 {fn_name}({args_summary})")
+                                result = await asyncio.to_thread(registry.execute, fn_name, fn_args)
+                                result_preview = result[:120].replace("\n", " ") if result else "(empty)"
+                                if len(result) > 120:
+                                    result_preview += "..."
+                                agent(f"[{iteration}] ✅ → {result_preview}")
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": f"call_failed_{i}",
+                                    "name": fn_name,
+                                    "content": result,
+                                })
+                            messages.append({
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": f"call_failed_{i}",
+                                        "type": "function",
+                                        "function": {"name": tc["name"], "arguments": json.dumps(tc["arguments"])},
+                                    }
+                                    for i, tc in enumerate(extracted)
+                                ],
+                            })
+                            continue
+                    tools_disabled = True
+                    warn("Groq tool_use_failed — disabling tools for this task")
+                    continue
                 else:
                     error(f"API error: {err_type}: {err_msg}")
                     await manager.send_personal_message(
                         json.dumps({"type": "error", "content": f"Ошибка API: {err_type}"}),
                         websocket,
                     )
-                await manager.send_personal_message(
-                    json.dumps({"type": "status", "content": "idle"}), websocket
-                )
-                return
+                    await manager.send_personal_message(
+                        json.dumps({"type": "status", "content": "idle"}), websocket
+                    )
+                    return
 
             msg = response.choices[0].message
             assistant_msg: dict[str, Any] = {
