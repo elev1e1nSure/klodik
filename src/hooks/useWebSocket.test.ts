@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
+import { act } from "react";
 import { useWebSocket } from "./useWebSocket";
 
 class MockWebSocket {
@@ -59,11 +60,13 @@ describe("useWebSocket", () => {
     await waitFor(() => expect(result.current.connected).toBe(true));
 
     const ws = MockWebSocket.instances[0];
-    ws.onmessage?.(
-      new MessageEvent("message", {
-        data: JSON.stringify({ type: "status", content: "working" }),
-      })
-    );
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "status", content: "working" }),
+        })
+      );
+    });
 
     await waitFor(() => expect(result.current.status).toBe("working"));
   });
@@ -73,11 +76,13 @@ describe("useWebSocket", () => {
     await waitFor(() => expect(result.current.connected).toBe(true));
 
     const ws = MockWebSocket.instances[0];
-    ws.onmessage?.(
-      new MessageEvent("message", {
-        data: JSON.stringify({ type: "message", content: "hello" }),
-      })
-    );
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "message", content: "hello" }),
+        })
+      );
+    });
 
     await waitFor(() => expect(result.current.lastMessage).toBe("hello"));
   });
@@ -99,9 +104,11 @@ describe("useWebSocket", () => {
     await waitFor(() => expect(result.current.connected).toBe(true));
 
     const ws = MockWebSocket.instances[0];
-    ws.onmessage?.(
-      new MessageEvent("message", { data: "not json" })
-    );
+    act(() => {
+      ws.onmessage?.(
+        new MessageEvent("message", { data: "not json" })
+      );
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(result.current.lastMessage).toBe("");
@@ -112,7 +119,9 @@ describe("useWebSocket", () => {
     await waitFor(() => expect(result.current.connected).toBe(true));
 
     const ws = MockWebSocket.instances[0];
-    ws.onclose?.(new CloseEvent("close"));
+    act(() => {
+      ws.onclose?.(new CloseEvent("close"));
+    });
 
     await waitFor(() => expect(result.current.connected).toBe(false));
   });
@@ -122,7 +131,9 @@ describe("useWebSocket", () => {
     await waitFor(() => expect(result.current.connected).toBe(true));
 
     const ws = MockWebSocket.instances[0];
-    ws.onerror?.(new Event("error"));
+    act(() => {
+      ws.onerror?.(new Event("error"));
+    });
 
     await waitFor(() => expect(result.current.connected).toBe(false));
   });
