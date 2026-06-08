@@ -78,7 +78,7 @@
 
 ```bash
 # Клонировать
-git clone https://github.com/yourname/klodik.git
+git clone https://github.com/elev1e1nSure/klodik.git
 cd klodik
 
 # JS зависимости

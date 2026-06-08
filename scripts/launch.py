@@ -264,7 +264,7 @@ def _show_welcome() -> None:
     console.print(Panel(
         Text.assemble(banner, "\n", subtitle),
         title="[bold bright_white]🤖  Klodik Launcher[/]",
-        subtitle="[dim]v0.1.0[/]",
+        subtitle="[dim]v1.0.0[/]",
         border_style="bright_cyan",
         box=box.ROUNDED,
         padding=(1, 4),

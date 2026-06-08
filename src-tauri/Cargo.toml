@@ -1,6 +1,6 @@
 [package]
 name = "klodik"
-version = "0.1.0"
+version = "1.0.0"
 description = "Desktop AI agent overlay (Klodik)"
 authors = ["elev1"]
 edition = "2021"
