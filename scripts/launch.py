@@ -367,8 +367,8 @@ def _select_provider(env: dict[str, str]) -> dict[str, str] | None:
         p = PROVIDER_PRESETS[name]
         icon = p["icon"]
         key_req = "[red]yes[/]" if p["needs_key"] else "[green]no[/]"
-        table.add_row(str(i), f"{icon} {name}", p["description"], key_req)
-    table.add_row("0", _t("back", lang), "", "")
+        table.add_row(f"[ {i} ]", f"{icon} {name}", p["description"], key_req)
+    table.add_row("[ 0 ]", _t("back", lang), "", "")
 
     console.print(table)
     console.print()
@@ -401,8 +401,8 @@ def _select_provider(env: dict[str, str]) -> dict[str, str] | None:
         model_table.add_column("#", justify="right")
         model_table.add_column(_t("model", lang))
         for i, m in enumerate(models, 1):
-            model_table.add_row(str(i), m)
-        model_table.add_row("0", _t("back", lang))
+            model_table.add_row(f"[ {i} ]", m)
+        model_table.add_row("[ 0 ]", _t("back", lang))
         console.print(model_table)
         console.print()
         model_choice = Prompt.ask(
@@ -581,10 +581,10 @@ def _launch_app(py: Path, env: dict[str, str]) -> bool:
 _TEXTS: dict[str, dict[str, str]] = {
     "en": {
         "menu_title": "Main Menu",
-        "launch": "🚀  Launch Klodik",
-        "configure": "⚙️  Configure provider / model",
-        "language": "🌐  Switch language",
-        "exit": "👋  Exit",
+        "launch": "Launch Klodik",
+        "configure": "Configure provider / model",
+        "language": "Switch language",
+        "exit": "Exit",
         "choose": "Choose option",
         "system_check": "System Check",
         "current_config": "Current Config",
@@ -621,14 +621,20 @@ _TEXTS: dict[str, dict[str, str]] = {
         "api_error": "API error",
         "unexpected_error": "Unexpected error",
         "launch_failed": "Launch failed",
+        "db_manage": "Memory database",
+        "db_show": "Show recent conversations",
+        "db_clear": "Clear all conversations",
+        "db_cleared": "Memory cleared",
+        "db_empty": "No conversations yet",
+        "db_count": "{count} conversations",
         "invalid_choice": "Invalid choice. Try again.",
     },
     "ru": {
         "menu_title": "Главное меню",
-        "launch": "🚀  Запустить Клодика",
-        "configure": "⚙️  Настроить провайдер / модель",
-        "language": "🌐  Сменить язык",
-        "exit": "👋  Выход",
+        "launch": "Запустить Клодика",
+        "configure": "Настроить провайдер / модель",
+        "language": "Сменить язык",
+        "exit": "Выход",
         "choose": "Выбери пункт",
         "system_check": "Проверка системы",
         "current_config": "Текущая конфигурация",
@@ -665,6 +671,12 @@ _TEXTS: dict[str, dict[str, str]] = {
         "api_error": "Ошибка API",
         "unexpected_error": "Неожиданная ошибка",
         "launch_failed": "Запуск не удался",
+        "db_manage": "База данных памяти",
+        "db_show": "Показать последние диалоги",
+        "db_clear": "Очистить все диалоги",
+        "db_cleared": "Память очищена",
+        "db_empty": "Пока нет диалогов",
+        "db_count": "{count} диалогов",
         "invalid_choice": "Неверный выбор. Попробуй ещё.",
     },
 }
@@ -764,30 +776,28 @@ def _show_menu(env: dict[str, str]) -> str | None:
         style="bold bright_cyan",
     )
 
-    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-    table.add_column("#", justify="center", style="bold cyan")
-    table.add_column("Option")
-    table.add_row("1", _t("launch", lang))
-    table.add_row("2", _t("configure", lang))
-    table.add_row("3", _t("language", lang))
-    table.add_row("4", _t("exit", lang))
+    lines: list[Text] = [
+        Text.assemble(("[ 1 ]", "bold cyan"), "  🚀  ", _t("launch", lang)),
+        Text.assemble(("[ 2 ]", "bold cyan"), "  ⚙️  ", _t("configure", lang)),
+        Text.assemble(("[ 3 ]", "bold cyan"), "  🌐  ", _t("language", lang)),
+        Text.assemble(("[ 4 ]", "bold cyan"), "  🧠  ", _t("db_manage", lang)),
+        Text.assemble(("[ 5 ]", "bold cyan"), "  👋  ", _t("exit", lang)),
+    ]
 
-    # Compact config preview above menu
     config_line = (
         f"[dim]{_t('provider', lang)}:[/] {preset.get('icon', '🔧')} {provider}  |  "
         f"[dim]{_t('model', lang)}:[/] {model}"
     )
     console.print(Panel(
-        Group(sprite, table),
+        Group(sprite, *lines),
         title=f"[bold]🤖 {_t('menu_title', lang)}[/]  ·  {config_line}",
         border_style="bright_cyan",
         padding=(0, 2),
     ))
-    console.print()
 
     choice = Prompt.ask(
         f"{_t('choose', lang)}",
-        choices=["1", "2", "3", "4"],
+        choices=["1", "2", "3", "4", "5"],
         default="1",
     )
     return choice
@@ -801,6 +811,77 @@ def _switch_language(env: dict[str, str]) -> dict[str, str]:
     _save_env(env)
     console.print(f"[green]✓ {_t('lang_en' if new_lang == 'en' else 'lang_ru', new_lang)}[/]\n")
     return env
+
+
+def _manage_memory(env: dict[str, str]) -> None:
+    """Show or clear the agent's memory database."""
+    import sqlite3
+
+    lang = env.get("LAUNCHER_LANG", "ru")
+    db_path = PROJECT_ROOT / "sidecar" / "memory.db"
+
+    if not db_path.exists():
+        console.print(f"[yellow]{_t('db_empty', lang)}[/]\n")
+        return
+
+    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
+    table.add_column("#", justify="center", style="bold cyan")
+    table.add_column("Option")
+    table.add_row("1", _t("db_show", lang))
+    table.add_row("2", _t("db_clear", lang))
+    table.add_row("0", _t("back", lang))
+    console.print(table)
+    console.print()
+
+    choice = Prompt.ask(
+        _t("choose", lang),
+        choices=["0", "1", "2"],
+        default="0",
+    )
+    if choice == "0":
+        return
+
+    if choice == "1":
+        try:
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT timestamp, task, response FROM interactions ORDER BY id DESC LIMIT 10"
+                ).fetchall()
+            if not rows:
+                console.print(f"[yellow]{_t('db_empty', lang)}[/]\n")
+                return
+            console.print(f"[dim]{_t('db_count', lang, count=len(rows))}[/]\n")
+            for row in rows:
+                ts = row["timestamp"][:19].replace("T", " ")
+                task = row["task"][:60]
+                resp = row["response"][:80].replace("\n", " ")
+                console.print(Panel(
+                    f"[bold cyan]{ts}[/]\n"
+                    f"[dim]📝[/] {task}…\n"
+                    f"[dim]💬[/] {resp}…",
+                    border_style="bright_cyan",
+                    padding=(0, 1),
+                ))
+            console.print()
+        except Exception as e:
+            console.print(f"[red]Error reading DB: {e}[/]\n")
+        return
+
+    if choice == "2":
+        confirm = Prompt.ask(
+            "[red]Удалить ВСЕ диалоги?[/]" if lang == "ru" else "[red]Delete ALL conversations?[/]",
+            choices=["y", "n"],
+            default="n",
+        )
+        if confirm == "y":
+            try:
+                with sqlite3.connect(str(db_path)) as conn:
+                    conn.execute("DELETE FROM interactions")
+                console.print(f"[green]✓ {_t('db_cleared', lang)}[/]\n")
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/]\n")
+        return
 
 
 def main() -> None:
@@ -857,6 +938,8 @@ def main() -> None:
         elif choice == "3":
             env = _switch_language(env)
         elif choice == "4":
+            _manage_memory(env)
+        elif choice == "5":
             console.print(f"[dim]{_t('bye', env.get('LAUNCHER_LANG', 'ru'))}[/]")
             sys.exit(0)
         else:
