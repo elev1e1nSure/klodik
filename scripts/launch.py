@@ -793,29 +793,13 @@ def _show_menu(env: dict[str, str]) -> str | None:
     return choice
 
 
-def _switch_language(env: dict[str, str]) -> dict[str, str] | None:
-    """Interactive language switcher. Returns None if cancelled."""
+def _switch_language(env: dict[str, str]) -> dict[str, str]:
+    """Toggle language ru ↔ en instantly."""
     lang = env.get("LAUNCHER_LANG", "ru")
-    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-    table.add_column("#", justify="center", style="bold cyan")
-    table.add_column("Language")
-    table.add_row("1", _t("lang_en", lang))
-    table.add_row("2", _t("lang_ru", lang))
-    table.add_row("0", _t("back", lang))
-    console.print(table)
-    console.print()
-
-    choice = Prompt.ask(
-        _t("lang_switch", lang),
-        choices=["0", "1", "2"],
-        default="2" if lang == "ru" else "1",
-    )
-    if choice == "0":
-        return None
-    new_lang = "en" if choice == "1" else "ru"
+    new_lang = "en" if lang == "ru" else "ru"
     env["LAUNCHER_LANG"] = new_lang
     _save_env(env)
-    console.print(f"[green]✓ Language: {_t('lang_en' if new_lang == 'en' else 'lang_ru', new_lang)}[/]\n")
+    console.print(f"[green]✓ {_t('lang_en' if new_lang == 'en' else 'lang_ru', new_lang)}[/]\n")
     return env
 
 
@@ -871,11 +855,7 @@ def main() -> None:
             else:
                 console.print()
         elif choice == "3":
-            new_env = _switch_language(env)
-            if new_env is not None:
-                env = new_env
-            else:
-                console.print()
+            env = _switch_language(env)
         elif choice == "4":
             console.print(f"[dim]{_t('bye', env.get('LAUNCHER_LANG', 'ru'))}[/]")
             sys.exit(0)
