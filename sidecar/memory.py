@@ -7,12 +7,18 @@ from pathlib import Path
 
 from config import settings
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 
 class Memory:
     """Stores interactions and preferences in a local SQLite database."""
 
     def __init__(self, db_path: str | None = None):
-        self.db_path = db_path or settings.memory_db_path
+        raw_path = db_path or settings.memory_db_path
+        p = Path(raw_path)
+        if not p.is_absolute():
+            p = _PROJECT_ROOT / p
+        self.db_path = str(p)
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 

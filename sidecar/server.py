@@ -1,4 +1,4 @@
-"""FastAPI server with WebSocket endpoint and connection management."""
+"""FastAPI server with WebSocket endpoint."""
 
 import asyncio
 import json
@@ -6,10 +6,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.websockets import WebSocketState
 
 import agent
 from config import settings
+from connection import manager
 
 
 @asynccontextmanager
@@ -41,59 +41,51 @@ async def health():
     return {"status": "ok"}
 
 
-class ConnectionManager:
-    """Manages active WebSocket connections."""
-
-    def __init__(self):
-        self.active: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        try:
-            self.active.remove(websocket)
-        except ValueError:
-            pass
-
-    async def send_personal_message(self, message: str, websocket: WebSocket):
-        try:
-            if websocket.client_state == WebSocketState.DISCONNECTED:
-                return
-            await websocket.send_text(message)
-        except (WebSocketDisconnect, RuntimeError, ConnectionResetError):
-            pass
-        except Exception:
-            pass
-
-
-manager = ConnectionManager()
+_current_task: asyncio.Task | None = None
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
-    agent.current_websocket = websocket
-    print("[WS] Client connected")
+    global _current_task
     try:
-        while True:
-            data = await websocket.receive_text()
-            print(f"[WS] Received: {data!r}")
-            agent.last_activity = asyncio.get_event_loop().time()
-            try:
-                payload = json.loads(data)
-                if payload.get("type") == "task":
-                    task = payload.get("content", "")
-                    print(f"[WS] Starting agent_loop with task: {task!r}")
-                    asyncio.create_task(agent.agent_loop(task, websocket))
-            except json.JSONDecodeError:
-                await manager.send_personal_message(
-                    json.dumps({"type": "error", "content": "Invalid JSON"}), websocket
-                )
-    except (WebSocketDisconnect, ConnectionResetError):
-        print("[WS] Client disconnected")
-    finally:
-        manager.disconnect(websocket)
+        await manager.connect(websocket)
+        agent.current_websocket = websocket
+        print("[WS] Client connected")
+        try:
+            while True:
+                try:
+                    data = await websocket.receive_text()
+                except (RuntimeError, AssertionError):
+                    break
+                print(f"[WS] Received: {data!r}")
+                agent.last_activity = asyncio.get_event_loop().time()
+                try:
+                    payload = json.loads(data)
+                    if payload.get("type") == "task":
+                        task = payload.get("content", "")
+                        print(f"[WS] Starting agent_loop with task: {task!r}")
+                        if _current_task and not _current_task.done():
+                            _current_task.cancel()
+                            try:
+                                await _current_task
+                            except asyncio.CancelledError:
+                                pass
+                        _current_task = asyncio.create_task(agent.agent_loop(task, websocket))
+                except json.JSONDecodeError:
+                    await manager.send_personal_message(
+                        json.dumps({"type": "error", "content": "Invalid JSON"}), websocket
+                    )
+        except (WebSocketDisconnect, ConnectionResetError):
+            print("[WS] Client disconnected")
+        finally:
+            manager.disconnect(websocket)
+            if agent.current_websocket is websocket:
+                agent.current_websocket = None
+    except Exception as e:
+        print(f"[WS] Unhandled error: {type(e).__name__}: {e}")
+        try:
+            manager.disconnect(websocket)
+        except Exception:
+            pass
         if agent.current_websocket is websocket:
             agent.current_websocket = None

@@ -39,8 +39,9 @@ sidecar/memory.db
 
 # Tauri / Rust
 target/
-Cargo.lock
 
 # Build outputs
 dist/
 build/
+coverage/
+sidecar/.coverage

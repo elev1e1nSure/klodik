@@ -67,9 +67,9 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
           <textarea
             value={task}
             onChange={(e) => setTask(e.target.value)}
-            placeholder="What can I help you with today?"
+            placeholder="Чем займёмся?"
             className="flex-1 text-sm text-[#9f9c95] bg-transparent resize-none outline-none placeholder-gray-400 no-scrollbar"
-            rows={1}
+            rows={Math.min(5, Math.max(1, task.split("\n").length))}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();

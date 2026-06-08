@@ -77,7 +77,7 @@ class TestWebSocket:
             WebSocketDisconnect(),
         ])
         mock_agent_loop = AsyncMock()
-        monkeypatch.setattr("server.agent_loop", mock_agent_loop)
+        monkeypatch.setattr("agent.agent_loop", mock_agent_loop)
         await websocket_endpoint(ws)
         mock_agent_loop.assert_called_once_with("hello", ws)
 

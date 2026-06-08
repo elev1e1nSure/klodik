@@ -25,7 +25,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="flex items-center justify-center w-full h-full text-[#9f9c95] text-xs p-4 text-center">
-          Something went wrong. Restart the app.
+          Что-то пошло не так. Перезапусти приложение.
         </div>
       );
     }

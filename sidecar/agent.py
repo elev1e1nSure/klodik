@@ -57,7 +57,7 @@ async def agent_loop(task: str, websocket: Any):
 
     Sends status updates and the final message over the websocket.
     """
-    from server import manager
+    from connection import manager
 
     print(f"[Agent] Loop started for task: {task!r}")
     await manager.send_personal_message(
@@ -94,7 +94,26 @@ async def agent_loop(task: str, websocket: Any):
     try:
         for _ in range(MAX_TOOL_ITERATIONS):
             print("[Agent] Calling LLM...")
-            response = await asyncio.to_thread(completion, **_build_completion_kwargs())
+            try:
+                response = await asyncio.to_thread(completion, **_build_completion_kwargs())
+            except Exception as api_err:
+                err_type = type(api_err).__name__
+                err_msg = str(api_err)
+                print(f"[Agent] API error: {err_type}: {err_msg}")
+                if "rate limit" in err_msg.lower() or "429" in err_msg:
+                    await manager.send_personal_message(
+                        json.dumps({"type": "error", "content": "Достигнут лимит API. Подожди минуту."}),
+                        websocket,
+                    )
+                else:
+                    await manager.send_personal_message(
+                        json.dumps({"type": "error", "content": f"Ошибка API: {err_type}"}),
+                        websocket,
+                    )
+                await manager.send_personal_message(
+                    json.dumps({"type": "status", "content": "idle"}), websocket
+                )
+                return
             print("[Agent] LLM responded")
 
             msg = response.choices[0].message
@@ -117,7 +136,7 @@ async def agent_loop(task: str, websocket: Any):
                     json.dumps({"type": "message", "content": content}),
                     websocket,
                 )
-                memory.save_interaction(task, content)
+                await asyncio.to_thread(memory.save_interaction, task, content)
                 break
 
             # Execute tools
@@ -161,7 +180,7 @@ async def agent_loop(task: str, websocket: Any):
                 json.dumps({"type": "message", "content": fallback}),
                 websocket,
             )
-            memory.save_interaction(task, fallback)
+            await asyncio.to_thread(memory.save_interaction, task, fallback)
 
     except Exception as e:
         print(f"[Agent] ERROR: {e}")
@@ -169,9 +188,12 @@ async def agent_loop(task: str, websocket: Any):
             json.dumps({"type": "error", "content": str(e)}), websocket
         )
 
-    await manager.send_personal_message(
-        json.dumps({"type": "status", "content": "idle"}), websocket
-    )
+    try:
+        await manager.send_personal_message(
+            json.dumps({"type": "status", "content": "idle"}), websocket
+        )
+    except Exception:
+        pass
 
 
 async def initiative_loop():
@@ -189,9 +211,12 @@ async def initiative_loop():
             continue
         loop = asyncio.get_event_loop()
         if loop.time() - last_activity > 60:
-            greeting = random.choice(greetings)
-            from server import manager
-            await manager.send_personal_message(
-                json.dumps({"type": "message", "content": greeting}),
-                current_websocket,
-            )
+            try:
+                greeting = random.choice(greetings)
+                from connection import manager
+                await manager.send_personal_message(
+                    json.dumps({"type": "message", "content": greeting}),
+                    current_websocket,
+                )
+            except Exception:
+                pass

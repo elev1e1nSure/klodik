@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -443,37 +444,53 @@ def _select_provider(env: dict[str, str]) -> dict[str, str] | None:
     return env
 
 
-def _launch_app(py: Path, env: dict[str, str]) -> None:
-    """Start sidecar + Tauri dev mode."""
+def _launch_app(py: Path, env: dict[str, str]) -> bool:
+    """Start sidecar + Tauri dev mode. Returns True if launched, False otherwise."""
     is_win = platform.system() == "Windows"
     lang = env.get("LAUNCHER_LANG", "ru")
+    ws_port = int(env.get("WS_PORT", "8765"))
 
-    # Sidecar (no shell — cleaner process tree)
-    sidecar = subprocess.Popen(
-        [str(py), str(SIDECAR_DIR / "main.py")],
-        cwd=PROJECT_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    # 1) Ensure port is free
+    if _is_port_in_use(ws_port):
+        if not _clear_port(ws_port, lang):
+            console.print(f"[red]{_t('launch_failed', lang)}[/]")
+            return False
 
-    # Tauri (resolve pnpm path on Windows)
+    # 2) Start sidecar
+    try:
+        sidecar = subprocess.Popen(
+            [str(py), str(SIDECAR_DIR / "main.py")],
+            cwd=PROJECT_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception as e:
+        console.print(f"[red]{_t('launch_failed', lang)}: {e}[/]")
+        return False
+
+    # 3) Start Tauri
     tauri_cmd = ["pnpm", "tauri", "dev"]
     if is_win:
         pnpm_path = shutil.which("pnpm")
         if pnpm_path:
             tauri_cmd = [pnpm_path, "tauri", "dev"]
-    tauri = subprocess.Popen(
-        tauri_cmd,
-        cwd=PROJECT_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    try:
+        tauri = subprocess.Popen(
+            tauri_cmd,
+            cwd=PROJECT_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception as e:
+        console.print(f"[red]{_t('launch_failed', lang)}: {e}[/]")
+        sidecar.terminate()
+        return False
 
     console.print(Panel(
         f"[green]🚀 {_t('launching', lang)}[/]\n"
@@ -493,24 +510,45 @@ def _launch_app(py: Path, env: dict[str, str]) -> None:
         else:
             proc.kill()
 
+    import queue
+    import threading
+
+    log_queue: queue.Queue = queue.Queue()
+
+    def _reader(proc: subprocess.Popen, tag: str) -> None:
+        try:
+            for line in proc.stdout:  # type: ignore[union-attr]
+                log_queue.put((tag, line))
+        except Exception:
+            pass
+
+    threading.Thread(target=_reader, args=(sidecar, "sidecar"), daemon=True).start()
+    threading.Thread(target=_reader, args=(tauri, "tauri"), daemon=True).start()
+
     try:
         while True:
-            if sidecar.poll() is None:
-                line = sidecar.stdout.readline()  # type: ignore[union-attr]
-                if line:
-                    console.print(f"[cyan][sidecar][/] {line.rstrip()}")
-            if tauri.poll() is None:
-                line = tauri.stdout.readline()  # type: ignore[union-attr]
-                if line:
-                    console.print(f"[magenta][tauri][/] {line.rstrip()}")
-            if sidecar.poll() is not None and tauri.poll() is not None:
+            try:
+                tag, line = log_queue.get(timeout=0.1)
+                stripped = line.rstrip()
+                if tag == "sidecar":
+                    if "rate limit" in stripped.lower() or "429" in stripped:
+                        console.print(f"[yellow][sidecar] {_t('rate_limit', lang)}[/]")
+                        continue
+                    if "Traceback (most recent call last):" in stripped or "ERROR:" in stripped or "Exception in ASGI" in stripped:
+                        console.print(f"[red][sidecar] {stripped}[/]")
+                        continue
+                    console.print(f"[cyan][sidecar][/] {stripped}")
+                else:
+                    console.print(f"[magenta][tauri][/] {stripped}")
+            except queue.Empty:
+                pass
+
+            if sidecar.poll() is not None and tauri.poll() is not None and log_queue.empty():
                 break
-            time.sleep(0.05)
     except KeyboardInterrupt:
         console.print(f"\n[yellow]{_t('shutting_down', lang)}[/]")
         sidecar.terminate()
         tauri.terminate()
-        # Wait gracefully, then force-kill
         try:
             sidecar.wait(timeout=2)
         except subprocess.TimeoutExpired:
@@ -519,6 +557,7 @@ def _launch_app(py: Path, env: dict[str, str]) -> None:
             tauri.wait(timeout=2)
         except subprocess.TimeoutExpired:
             _force_kill(tauri)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +599,14 @@ _TEXTS: dict[str, dict[str, str]] = {
         "lang_en": "English",
         "lang_ru": "Русский",
         "back": "←  Back",
+        "port_in_use": "Port {port} is already in use",
+        "kill_confirm": "Kill process {pid} using port {port}?",
+        "killed": "Killed process {pid}",
+        "skipped": "Skipped",
+        "rate_limit": "API rate limit reached. Wait a minute and try again.",
+        "api_error": "API error",
+        "unexpected_error": "Unexpected error",
+        "launch_failed": "Launch failed",
         "invalid_choice": "Invalid choice. Try again.",
     },
     "ru": {
@@ -596,14 +643,87 @@ _TEXTS: dict[str, dict[str, str]] = {
         "lang_en": "English",
         "lang_ru": "Русский",
         "back": "←  Назад",
+        "port_in_use": "Порт {port} уже занят",
+        "kill_confirm": "Убить процесс {pid}, использующий порт {port}?",
+        "killed": "Процесс {pid} остановлен",
+        "skipped": "Пропущено",
+        "rate_limit": "Достигнут лимит API. Подожди минуту и попробуй снова.",
+        "api_error": "Ошибка API",
+        "unexpected_error": "Неожиданная ошибка",
+        "launch_failed": "Запуск не удался",
         "invalid_choice": "Неверный выбор. Попробуй ещё.",
     },
 }
 
 
-def _t(key: str, lang: str) -> str:
-    """Get translated string."""
-    return _TEXTS.get(lang, _TEXTS["en"]).get(key, key)
+def _t(key: str, lang: str, **kwargs: Any) -> str:
+    """Get translated string with optional formatting."""
+    text = _TEXTS.get(lang, _TEXTS["en"]).get(key, key)
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except Exception:
+            return text
+    return text
+
+
+def _is_port_in_use(port: int) -> bool:
+    """Check if a local TCP port is already bound."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError:
+            return True
+    return False
+
+
+def _find_process_on_port(port: int) -> int | None:
+    """Find the PID listening on the given port (Windows-only for now)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            shell=False, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.strip().split()
+                if parts:
+                    try:
+                        return int(parts[-1])
+                    except ValueError:
+                        continue
+    except Exception:
+        pass
+    return None
+
+
+def _clear_port(port: int, lang: str) -> bool:
+    """Ask user before killing a process that occupies the port."""
+    if not _is_port_in_use(port):
+        return True
+    pid = _find_process_on_port(port)
+    if pid is None:
+        console.print(f"[yellow]{_t('port_in_use', lang, port=port)}[/]")
+        return False
+    console.print(f"[yellow]{_t('port_in_use', lang, port=port)} (PID {pid})[/]")
+    if Confirm.ask(_t("kill_confirm", lang, pid=pid, port=port), default=True):
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True, timeout=5,
+            )
+            time.sleep(0.5)
+            console.print(f"[green]{_t('killed', lang, pid=pid)}[/]")
+            return True
+        except Exception as e:
+            console.print(f"[red]{_t('killed', lang, pid=pid)}: {e}[/]")
+            return False
+    else:
+        console.print(f"[dim]{_t('skipped', lang)}[/]")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -744,8 +864,22 @@ def main() -> None:
         console.print(f"[dim]{_t('create_venv', lang)}[/]")
         sys.exit(1)
 
-    _launch_app(py, env)
+    ok = _launch_app(py, env)
+    if not ok:
+        console.print(f"[red]{_t('launch_failed', env.get('LAUNCHER_LANG', 'ru'))}[/]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interrupted.[/]")
+        sys.exit(0)
+    except Exception as e:
+        console.print(Panel(
+            f"[red bold]{_t('unexpected_error', 'en')}[/]\n"
+            f"[dim]{type(e).__name__}: {e}[/]",
+            border_style="red",
+        ))
+        sys.exit(1)
