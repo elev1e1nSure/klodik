@@ -100,13 +100,21 @@ async def agent_loop(task: str, websocket: Any):
             except Exception as api_err:
                 err_type = type(api_err).__name__
                 err_msg = str(api_err)
-                error(f"API error: {err_type}: {err_msg}")
                 if "rate limit" in err_msg.lower() or "429" in err_msg:
+                    retry_match = re.search(r"try again in ([\d.]+)s", err_msg)
+                    retry_sec = float(retry_match.group(1)) if retry_match else None
+                    if retry_sec:
+                        warn(f"Лимит API исчерпан. Повтор через {retry_sec:.1f} сек.")
+                        ws_msg = f"Лимит API исчерпан. Повтор через {retry_sec:.0f} сек."
+                    else:
+                        warn("Лимит API исчерпан. Подожди немного.")
+                        ws_msg = "Достигнут лимит API. Подожди минуту."
                     await manager.send_personal_message(
-                        json.dumps({"type": "error", "content": "Достигнут лимит API. Подожди минуту."}),
+                        json.dumps({"type": "error", "content": ws_msg}),
                         websocket,
                     )
                 else:
+                    error(f"API error: {err_type}: {err_msg}")
                     await manager.send_personal_message(
                         json.dumps({"type": "error", "content": f"Ошибка API: {err_type}"}),
                         websocket,

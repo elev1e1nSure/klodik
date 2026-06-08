@@ -26,6 +26,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -538,19 +539,20 @@ def _launch_app(py: Path, env: dict[str, str]) -> bool:
             try:
                 tag, line = log_queue.get(timeout=0.1)
                 stripped = _strip_ansi(line.rstrip())
+                ts = datetime.now().strftime("[%H:%M:%S]")
                 if tag == "sidecar":
-                    console.print(f"[cyan][sidecar][/] {stripped}")
+                    console.print(f"[cyan]{ts} [sidecar][/] {stripped}")
                 else:
                     # Tauri: show only errors / build finished / app running
                     lower = stripped.lower()
                     if "warning:" in lower:
-                        console.print(f"[yellow][tauri] {stripped}[/]")
+                        console.print(f"[yellow]{ts} [tauri] [WARN] {stripped}[/]")
                     elif any(k in lower for k in ("error", "failed", "panic", "compile error")):
-                        console.print(f"[red][tauri] {stripped}[/]")
+                        console.print(f"[red]{ts} [tauri] [ERROR] {stripped}[/]")
                     elif "finished" in lower and "dev" in lower:
-                        console.print(f"[green][tauri] Build finished — running[/]")
+                        console.print(f"[green]{ts} [tauri] Build finished — running[/]")
                     elif "running" in lower and "klodik.exe" in lower:
-                        console.print(f"[green][tauri] App started[/]")
+                        console.print(f"[green]{ts} [tauri] App started[/]")
                     # Suppress all other tauri noise (Vite, cargo progress, etc.)
             except queue.Empty:
                 pass
