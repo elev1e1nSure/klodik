@@ -101,7 +101,7 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
           data-tauri-drag-region
         />
         <div
-          className={`absolute inset-0 transition-opacity duration-300 ${
+          className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 ${
             isBusy ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
           }`}
         >
@@ -109,7 +109,7 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
             src="/claude_animated.lottie"
             autoplay
             loop
-            className="w-full h-full"
+            style={{ width: 166, height: 166 }}
             data-tauri-drag-region
           />
         </div>
