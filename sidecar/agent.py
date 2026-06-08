@@ -14,12 +14,13 @@ from litellm import completion
 from config import settings
 from log import agent, error, warn, debug
 from memory import memory
+from session_log import session_log
 from tools import registry
 
 last_activity: float = 0.0
 current_websocket: Any = None
 
-SYSTEM_PROMPT = """Ты — Клодик. Компаньон на рабочем столе. Живёшь на экране.
+SYSTEM_PROMPT = """Ты — Клодик. Компаньон на рабочем столе.
 
 Умеешь:
 - Файлы и папки
@@ -28,9 +29,17 @@ SYSTEM_PROMPT = """Ты — Клодик. Компаньон на рабочем
 - Открывать программы и ссылки
 - Гуглить и читать сайты
 - Запоминать что делал и что нравится пользователю
-- Цепочки: ищешь → находишь → делаешь
 
-Правила:
+Правила вызова инструментов:
+- НЕ вызывай инструменты на приветствия, вопросы, объяснения, шутки.
+- Вызывай инструмент ТОЛЬКО если пользователь явно просит действие.
+- Если tool вернул ошибку — смени стратегию. НИКОГДА не повторяй тот же вызов.
+- Не вызывай move_mouse, click, press_key, type_text просто так или в цикле.
+- Перед кликами/вводом используй get_active_window или screenshot.
+- Максимум 1-2 инструмента на простую задачу.
+- open_url сам открывает браузер. НЕ вызывай open_app перед open_url.
+
+Правила ответа:
 - Только русский. Без исключений.
 - Говори как человек в мессенджере. Коротко.
 - Если команда сработала — скажи факт и всё. Не анализируй.
@@ -38,10 +47,9 @@ SYSTEM_PROMPT = """Ты — Клодик. Компаньон на рабочем
 - Без "я рад помочь", "давайте проверим", "возможно проблема".
 - 1-2 предложения максимум.
 - Можешь быть саркастичным.
-- open_url сам открывает браузер. НЕ вызывай open_app перед open_url.
 """
 
-MAX_TOOL_ITERATIONS = 30
+MAX_TOOL_ITERATIONS = 10
 
 
 def _extract_tool_calls_from_content(content: str) -> list[dict[str, Any]]:
@@ -128,6 +136,8 @@ async def agent_loop(task: str, websocket: Any):
     try:
         last_tool_signature: str | None = None
         repeat_count = 0
+        blocked_tools: set[str] = set()
+        recent_errors = 0
         for iteration in range(1, MAX_TOOL_ITERATIONS + 1):
             try:
                 response = await asyncio.to_thread(completion, **_build_completion_kwargs())
@@ -278,28 +288,33 @@ async def agent_loop(task: str, websocket: Any):
                     })
                     continue
 
-                sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
-                if sig == last_tool_signature:
-                    repeat_count += 1
-                    if repeat_count >= 3:
-                        warn(f"Same tool call repeated {repeat_count} times, stopping")
-                        fallback = "Зациклился на одном действии. Попробуй переформулировать задачу."
-                        await manager.send_personal_message(
-                            json.dumps({"type": "message", "content": fallback}),
-                            websocket,
-                        )
-                        await asyncio.to_thread(memory.save_interaction, task, fallback)
-                        await manager.send_personal_message(
-                            json.dumps({"type": "status", "content": "idle"}), websocket
-                        )
-                        return
+                if fn_name in blocked_tools:
+                    result = f"Error: tool '{fn_name}' временно заблокирован после ошибки."
+                    warn(f"Blocked tool {fn_name} skipped")
                 else:
-                    last_tool_signature = sig
-                    repeat_count = 0
+                    sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
+                    if sig == last_tool_signature:
+                        repeat_count += 1
+                        if repeat_count >= 2:
+                            warn(f"Same tool call repeated {repeat_count} times, stopping")
+                            fallback = "Зациклился на одном действии. Попробуй переформулировать задачу."
+                            await manager.send_personal_message(
+                                json.dumps({"type": "message", "content": fallback}),
+                                websocket,
+                            )
+                            await asyncio.to_thread(memory.save_interaction, task, fallback)
+                            await manager.send_personal_message(
+                                json.dumps({"type": "status", "content": "idle"}), websocket
+                            )
+                            return
+                    else:
+                        last_tool_signature = sig
+                        repeat_count = 0
 
-                args_summary = " ".join(f"{k}={v!r}" for k, v in fn_args.items())
-                agent(f"[{iteration}] 🛠 {fn_name}({args_summary})")
-                result = await asyncio.to_thread(registry.execute, fn_name, fn_args)
+                    args_summary = " ".join(f"{k}={v!r}" for k, v in fn_args.items())
+                    agent(f"[{iteration}] 🛠 {fn_name}({args_summary})")
+                    result = await asyncio.to_thread(registry.execute, fn_name, fn_args)
+
                 result_preview = result[:120].replace("\n", " ") if result else "(empty)"
                 if len(result) > 120:
                     result_preview += "..."
@@ -310,6 +325,26 @@ async def agent_loop(task: str, websocket: Any):
                     "name": fn_name,
                     "content": result,
                 })
+                await asyncio.to_thread(session_log.append, fn_name, result)
+
+                # Защита: блокировать tool после ошибки
+                if isinstance(result, str) and result.startswith("Error:"):
+                    blocked_tools.add(fn_name)
+                    recent_errors += 1
+                    if recent_errors >= 3:
+                        warn("3 errors in a row, stopping loop")
+                        fallback = "Не получается выполнить действие. Переформулируй задачу."
+                        await manager.send_personal_message(
+                            json.dumps({"type": "message", "content": fallback}),
+                            websocket,
+                        )
+                        await asyncio.to_thread(memory.save_interaction, task, fallback)
+                        await manager.send_personal_message(
+                            json.dumps({"type": "status", "content": "idle"}), websocket
+                        )
+                        return
+                else:
+                    recent_errors = 0
 
         else:
             # Max iterations reached
