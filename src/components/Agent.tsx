@@ -89,14 +89,14 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
         </div>
       </form>
 
-      {/* Sprite — Lottie при любой работе, пиксель-арт только при idle */}
+      {/* Sprite — Lottie при работе, пиксель-арт только при idle */}
       <div className="relative w-[166px] h-[166px]">
         <img
           src="/app-icon.png"
           alt="Клодик"
           className={`absolute inset-0 w-full h-full image-pixelated transition-opacity duration-300 ${
             isBusy ? "opacity-0" : "opacity-100"
-          } ${isThinking ? "animate-agent-thinking" : "animate-agent-idle"}`}
+          } ${!isBusy && (isThinking ? "animate-agent-thinking" : "animate-agent-idle")}`}
           draggable={false}
           data-tauri-drag-region
         />
@@ -109,8 +109,7 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
             src="/claude_animated.lottie"
             autoplay
             loop
-            style={{ width: "166px", height: "166px" }}
-            className="image-pixelated"
+            className="w-full h-full"
             data-tauri-drag-region
           />
         </div>
