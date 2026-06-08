@@ -18,7 +18,6 @@
 
 <p align="center">
   <img src="screenshots/klodik-idle.png" width="320" alt="Klodik idle">
-  <img src="screenshots/klodik-working.png" width="320" alt="Klodik working">
 </p>
 
 ---

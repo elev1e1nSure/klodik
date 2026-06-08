@@ -77,7 +77,8 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
             }}
           />
           <button
-            type="submit"
+       
+       type="submit"
             aria-label="Send"
             title={!connected ? "Disconnected" : isBusy ? "Agent is busy" : "Send task"}
             disabled={!connected || isBusy || !task.trim()}
