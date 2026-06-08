@@ -39,7 +39,7 @@ SYSTEM_PROMPT = """Ты — Клодик. Компаньон на рабочем
 - Можешь быть саркастичным.
 """
 
-MAX_TOOL_ITERATIONS = 5
+MAX_TOOL_ITERATIONS = 30
 
 
 def _extract_tool_calls_from_content(content: str) -> list[dict[str, Any]]:
@@ -77,7 +77,7 @@ async def agent_loop(task: str, websocket: Any):
     """
     from connection import manager
 
-    agent(f"Loop started: {task!r}")
+    agent(f"📝 Задача: {task}")
     await manager.send_personal_message(
         json.dumps({"type": "status", "content": "thinking"}), websocket
     )
@@ -110,8 +110,7 @@ async def agent_loop(task: str, websocket: Any):
         return kwargs
 
     try:
-        for _ in range(MAX_TOOL_ITERATIONS):
-            agent("Calling LLM...")
+        for iteration in range(1, MAX_TOOL_ITERATIONS + 1):
             try:
                 response = await asyncio.to_thread(completion, **_build_completion_kwargs())
             except Exception as api_err:
@@ -140,7 +139,6 @@ async def agent_loop(task: str, websocket: Any):
                     json.dumps({"type": "status", "content": "idle"}), websocket
                 )
                 return
-            agent("LLM responded")
 
             msg = response.choices[0].message
             assistant_msg: dict[str, Any] = {
@@ -178,9 +176,8 @@ async def agent_loop(task: str, websocket: Any):
             if not tool_calls:
                 # Final answer
                 content = msg.content or "Не получилось ответить."
-                debug(f"LLM raw: {content!r}")
                 content = re.sub(r"^(?i:echo)\s*[:\-]?\s*", "", content).strip()
-                debug(f"LLM clean: {content!r}")
+                agent(f"💬 Ответ: {content}")
                 await manager.send_personal_message(
                     json.dumps({"type": "message", "content": content}),
                     websocket,
@@ -212,9 +209,13 @@ async def agent_loop(task: str, websocket: Any):
                     })
                     continue
 
-                agent(f"Executing tool: {fn_name}")
+                args_summary = " ".join(f"{k}={v!r}" for k, v in fn_args.items())
+                agent(f"[{iteration}] 🛠 {fn_name}({args_summary})")
                 result = await asyncio.to_thread(registry.execute, fn_name, fn_args)
-                debug(f"Tool result: {result[:200]!r}...")
+                result_preview = result[:120].replace("\n", " ") if result else "(empty)"
+                if len(result) > 120:
+                    result_preview += "..."
+                agent(f"[{iteration}] ✅ → {result_preview}")
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,

@@ -47,6 +47,8 @@ def terminal(*, command: str, cwd: str = ".") -> str:
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_DEFAULT_TIMEOUT,
         )
         out = result.stdout.strip()
