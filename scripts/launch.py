@@ -479,9 +479,9 @@ def _select_provider(env: dict[str, str]) -> dict[str, str] | None:
         new_key = Prompt.ask(
             _t("api_key_paste", lang),
             password=True,
-            default="",
+            default=current_key,
         )
-        if new_key:
+        if new_key != current_key:
             env[key_env] = new_key
             api_key = new_key
         else:
@@ -950,9 +950,9 @@ def _enter_api_key(env: dict[str, str]) -> None:
     new_key = Prompt.ask(
         _t("api_key_paste", lang),
         password=True,
-        default="",
+        default=current_key,
     )
-    if new_key:
+    if new_key != current_key:
         env[key_env] = new_key
         _save_env(env)
         console.print(f"[green]✓ {_t('api_key_saved', lang)} ({key_env})[/]\n")
