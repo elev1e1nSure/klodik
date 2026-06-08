@@ -59,7 +59,25 @@ pub fn run() {
                                 exstyle | win32::WS_EX_TOOLWINDOW as isize,
                             );
 
-                            // 2) Force frame recalculation
+                            // 2) Remove DWM accent border (Windows 11)
+                            let border_color = win32::DWMWA_COLOR_NONE;
+                            let _ = win32::DwmSetWindowAttribute(
+                                hwnd_ptr,
+                                win32::DWMWA_BORDER_COLOR,
+                                &border_color as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
+                            );
+
+                            // 3) Disable rounded corners (Windows 11)
+                            let corner = win32::DWMWCP_DONOTROUND;
+                            let _ = win32::DwmSetWindowAttribute(
+                                hwnd_ptr,
+                                win32::DWMWA_WINDOW_CORNER_PREFERENCE,
+                                &corner as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
+                            );
+
+                            // 4) Force frame recalculation — last, after all DWM changes
                             win32::SetWindowPos(
                                 hwnd_ptr,
                                 std::ptr::null_mut(),
@@ -69,24 +87,6 @@ pub fn run() {
                                     | win32::SWP_NOSIZE
                                     | win32::SWP_NOZORDER
                                     | win32::SWP_NOACTIVATE,
-                            );
-
-                            // 3) Remove DWM accent border (Windows 11)
-                            let border_color = win32::DWMWA_COLOR_NONE;
-                            let _ = win32::DwmSetWindowAttribute(
-                                hwnd_ptr,
-                                win32::DWMWA_BORDER_COLOR,
-                                &border_color as *const _ as *const _,
-                                std::mem::size_of::<u32>() as u32,
-                            );
-
-                            // 4) Disable rounded corners (Windows 11)
-                            let corner = win32::DWMWCP_DONOTROUND;
-                            let _ = win32::DwmSetWindowAttribute(
-                                hwnd_ptr,
-                                win32::DWMWA_WINDOW_CORNER_PREFERENCE,
-                                &corner as *const _ as *const _,
-                                std::mem::size_of::<u32>() as u32,
                             );
                         }
                     }

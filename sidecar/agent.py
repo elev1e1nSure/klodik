@@ -5,6 +5,7 @@ import json
 import os
 import random
 import re
+from types import SimpleNamespace
 from typing import Any
 
 from litellm import completion
@@ -39,6 +40,22 @@ SYSTEM_PROMPT = """Ты — Клодик. Компаньон на рабочем
 """
 
 MAX_TOOL_ITERATIONS = 5
+
+
+def _extract_tool_calls_from_content(content: str) -> list[dict[str, Any]]:
+    """Extract tool calls from XML-like tags that Llama sometimes emits in content."""
+    calls: list[dict[str, Any]] = []
+    # <function=name>{args}</function> or <function=name,{"args"}>
+    pattern = r'<function\s*=\s*([a-zA-Z_]\w*)\s*(?:>(\{.*?\})</function>|,\s*(\{.*?\})\s*>)'
+    for match in re.finditer(pattern, content, re.DOTALL):
+        name = match.group(1)
+        args_str = match.group(2) or match.group(3)
+        try:
+            args = json.loads(args_str)
+            calls.append({"name": name, "arguments": args})
+        except json.JSONDecodeError:
+            continue
+    return calls
 
 
 def _build_memory_context() -> str:
@@ -131,6 +148,29 @@ async def agent_loop(task: str, websocket: Any):
                 "content": msg.content or "",
             }
             tool_calls = getattr(msg, "tool_calls", None)
+
+            # Fallback: Llama via Groq sometimes puts tool calls in content as XML tags
+            if not tool_calls and msg.content:
+                extracted = _extract_tool_calls_from_content(msg.content)
+                if extracted:
+                    tool_calls = []
+                    for i, tc in enumerate(extracted):
+                        fn = SimpleNamespace(
+                            name=tc["name"], arguments=json.dumps(tc["arguments"])
+                        )
+                        tool_calls.append(
+                            SimpleNamespace(
+                                id=f"call_fallback_{i}", function=fn, type="function"
+                            )
+                        )
+                    assistant_msg["tool_calls"] = tool_calls
+                    # Strip the XML tags from displayed content
+                    clean = re.sub(
+                        r'<function\s*=\s*.*?>', '', msg.content, flags=re.DOTALL
+                    )
+                    clean = re.sub(r'</function>', '', clean, flags=re.DOTALL).strip()
+                    assistant_msg["content"] = clean
+
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
             messages.append(assistant_msg)

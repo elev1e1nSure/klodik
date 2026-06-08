@@ -64,9 +64,23 @@ def click(*, x: int, y: int) -> str:
         "required": ["text"],
     },
 )
+def _check_focus() -> str | None:
+    """Return error message if Klodik window is focused."""
+    try:
+        active = pyautogui.getActiveWindow()
+        if active and "klodik" in active.title.lower():
+            return "Error: Klodik window is focused. Click another window first."
+    except Exception:
+        pass
+    return None
+
+
 def type_text(*, text: str) -> str:
     if pyautogui is None:
         raise ToolError("pyautogui not installed")
+    err = _check_focus()
+    if err:
+        return err
     try:
         pyautogui.typewrite(text, interval=0.01)
         return f"Typed: {text[:50]}..."
@@ -88,6 +102,9 @@ def type_text(*, text: str) -> str:
 def press_key(*, key: str) -> str:
     if pyautogui is None:
         raise ToolError("pyautogui not installed")
+    err = _check_focus()
+    if err:
+        return err
     try:
         pyautogui.press(key)
         return f"Pressed: {key}"
