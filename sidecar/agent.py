@@ -5,6 +5,7 @@ import json
 import os
 import random
 import re
+import traceback
 from types import SimpleNamespace
 from typing import Any
 
@@ -117,6 +118,8 @@ async def agent_loop(task: str, websocket: Any):
         return kwargs
 
     try:
+        last_tool_signature: str | None = None
+        repeat_count = 0
         for iteration in range(1, MAX_TOOL_ITERATIONS + 1):
             try:
                 response = await asyncio.to_thread(completion, **_build_completion_kwargs())
@@ -136,6 +139,7 @@ async def agent_loop(task: str, websocket: Any):
                         json.dumps({"type": "error", "content": ws_msg}),
                         websocket,
                     )
+                    return
                 elif "tool_use_failed" in err_msg.lower():
                     # Extract failed_generation from error message
                     failed_gen = None
@@ -148,7 +152,10 @@ async def agent_loop(task: str, websocket: Any):
                             raw = failed_match.group(1)
                             failed_gen = raw.replace('\\"', '"').replace('\\\\', '\\')
                     if failed_gen:
-                        failed_gen = failed_gen.encode().decode("unicode_escape")
+                        try:
+                            failed_gen = failed_gen.encode().decode("unicode_escape")
+                        except UnicodeDecodeError:
+                            pass  # keep raw string if decode fails
                         extracted = _extract_tool_calls_from_content(failed_gen)
                         if extracted:
                             warn("Groq tool_use_failed — executing tool call from error")
@@ -255,7 +262,6 @@ async def agent_loop(task: str, websocket: Any):
                         json.dumps({"type": "error", "content": f"Invalid tool arguments for {fn_name}"}),
                         websocket,
                     )
-                    # Still append a tool result so the conversation can continue
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -263,6 +269,25 @@ async def agent_loop(task: str, websocket: Any):
                         "content": f"Error: invalid JSON arguments — {e}",
                     })
                     continue
+
+                sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True)}"
+                if sig == last_tool_signature:
+                    repeat_count += 1
+                    if repeat_count >= 3:
+                        warn(f"Same tool call repeated {repeat_count} times, stopping")
+                        fallback = "Зациклился на одном действии. Попробуй переформулировать задачу."
+                        await manager.send_personal_message(
+                            json.dumps({"type": "message", "content": fallback}),
+                            websocket,
+                        )
+                        await asyncio.to_thread(memory.save_interaction, task, fallback)
+                        await manager.send_personal_message(
+                            json.dumps({"type": "status", "content": "idle"}), websocket
+                        )
+                        return
+                else:
+                    last_tool_signature = sig
+                    repeat_count = 0
 
                 args_summary = " ".join(f"{k}={v!r}" for k, v in fn_args.items())
                 agent(f"[{iteration}] 🛠 {fn_name}({args_summary})")
@@ -288,7 +313,7 @@ async def agent_loop(task: str, websocket: Any):
             await asyncio.to_thread(memory.save_interaction, task, fallback)
 
     except Exception as e:
-        error(f"ERROR: {e}")
+        error(f"ERROR: {e}\n{traceback.format_exc()}")
         await manager.send_personal_message(
             json.dumps({"type": "error", "content": str(e)}), websocket
         )

@@ -190,7 +190,7 @@ class TestAgentLoop:
 
         calls = [json.loads(c[0][0]) for c in ws.send_text.call_args_list]
         messages = [c["content"] for c in calls if c["type"] == "message"]
-        assert "Достигнут лимит итераций инструментов." in messages
+        assert any("Зациклился на одном действии" in m for m in messages)
         assert "idle" in [c["content"] for c in calls if c["type"] == "status"]
 
     @pytest.mark.asyncio
