@@ -12,7 +12,7 @@ pub fn run() {
                 let _ = window.set_shadow(false);
 
                 let icon_bytes = app.path()
-                    .resolve("icons/icon.png", BaseDirectory::Resource)
+                    .resolve("icons/app-icon.png", BaseDirectory::Resource)
                     .and_then(|p| Ok(std::fs::read(&p).unwrap_or_default()))
                     .unwrap_or_default();
                 if !icon_bytes.is_empty() {

@@ -101,7 +101,7 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
         />
       ) : (
         <img
-          src="/claude.png"
+          src="/app-icon.png"
           alt="Клодик"
           className={`w-[166px] image-pixelated ${isThinking ? "animate-agent-thinking" : "animate-agent-idle"}`}
           draggable={false}

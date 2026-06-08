@@ -13,7 +13,7 @@
 > **Your desktop companion.** Klodik — a pixel-art AI agent that lives on your screen, talks to you in Russian, and actually does things — opens apps, types text, searches Google, moves your mouse, and remembers your habits.
 
 <p align="center">
-  <img src="public/claude.png" width="128" alt="Klodik sprite">
+  <img src="public/app-icon.png" width="128" alt="Klodik sprite">
 </p>
 
 ---
