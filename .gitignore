@@ -22,3 +22,25 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment
+.env
+
+# Python
+.venv/
+.venv_new/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Sidecar
+sidecar/memory.db
+
+# Tauri / Rust
+target/
+Cargo.lock
+
+# Build outputs
+dist/
+build/

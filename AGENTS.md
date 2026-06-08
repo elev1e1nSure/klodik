@@ -1,10 +1,14 @@
-# Claude Agent — Правила проекта
+# Клодик — Правила проекта
 
 ## 1. Суть и концепция
 
-**Claude Agent** — десктопный оверлей-агент (пиксельный персонаж), который живёт прямо на рабочем столе Windows. Пользователь перетаскивает агента по экрану, задаёт задачи в текстовом поле над головой, агент выполняет их через локальную LLM (Ollama + LiteLLM) с tool calling.
+**Клодик** — десктопный оверлей-агент (пиксельный персонаж), живущий прямо на рабочем столе Windows. Пользователь перетаскивает агента, задаёт задачи в текстовом поле, агент выполняет их через LLM с tool calling.
 
-Окно приложения: прозрачное, без рамок, поверх всех окон (`alwaysOnTop`), не отображается в таскбаре (`skipTaskbar`). Размер ~320×240 пикселей. Перетаскивание — через `data-tauri-drag-region`.
+Окно: прозрачное, без рамок, поверх всех окон (`alwaysOnTop`), не в таскбаре (`skipTaskbar`), квадратное 320×320 px. Перетаскивание через `data-tauri-drag-region`.
+
+Агент отвечает **строго по-русски**, кратко (1–2 предложения), в стиле живого собеседника в мессенджере. Умеет инициировать разговор сам.
+
+---
 
 ## 2. Стек
 
@@ -14,60 +18,77 @@
 | UI | React 19 + TypeScript + Tailwind CSS v4 |
 | Коммуникация | WebSocket (фронт ↔ sidecar) |
 | Sidecar | Python 3.12+, FastAPI, Uvicorn |
-| LLM | LiteLLM → Ollama (локальная модель, по умолчанию `llama3.2`) |
+| LLM | Groq, OpenAI, Gemini, Ollama (via litellm) |
+| Память | SQLite (`sidecar/memory.db`) |
 | Менеджер зависимостей JS | pnpm |
-| Менеджер зависимостей Python | uv |
+| Менеджер зависимостей Python | pip |
+
+---
 
 ## 3. Архитектура
 
 ```
 ┌─────────────────────────────────────┐
-│  Tauri Window (transparent overlay) │
-│  ┌─────────────────────────────┐  │
-│  │  React App                   │  │
-│  │  ├── Agent.tsx (спрайт, UI) │  │
-│  │  └── useWebSocket.ts (WS)    │  │
-│  └─────────────────────────────┘  │
-└──────────────┬──────────────────────┘
+│  Tauri Window (transparent overlay)   │
+│  ┌─────────────────────────────┐    │
+│  │  React App                   │    │
+│  │  ├── Agent.tsx (спрайт, UI)  │    │
+│  │  └── useWebSocket.ts (WS)    │    │
+│  └─────────────────────────────┘    │
+└──────────────┬────────────────────────┘
                │ WebSocket  ws://localhost:8765/ws
                ▼
 ┌─────────────────────────────────────┐
-│  Python Sidecar (FastAPI + uvicorn)│
+│  Python Sidecar (FastAPI + uvicorn) │
 │  ├── /health                        │
 │  ├── /ws  (WebSocket endpoint)      │
-│  │   └── agent_loop()               │
-│  │       ├── litellm.completion()    │
+│  │   └── agent_loop()              │
+│  │       ├── Groq chat.completions  │
+│  │       ├── Memory (SQLite)        │
 │  │       └── execute_tool()         │
 │  └── TOOLS: terminal, read_file,   │
-│      write_file, search, run_script │
+│      write_file, search, mkdir,      │
+│      list_dir, move_file, move_mouse,│
+│      click, open_app, open_url,      │
+│      google, read_url, type_text,    │
+│      press_key                       │
 └─────────────────────────────────────┘
                │
-               ▼ HTTP  localhost:11434
+               ▼ HTTPS  api.groq.com
         ┌──────────────┐
-        │  Ollama      │
-        │  (локально)  │
+        │  Groq Cloud  │
+        │  llama-3.3-70b│
         └──────────────┘
 ```
 
-### Поток данных при задаче
+### Поток данных
 
-1. Пользователь пишет задачу в `textarea` → нажимает Send (или Enter)
+1. Пользователь пишет в `textarea` → Enter/Send
 2. `useWebSocket` отправляет JSON: `{"type":"task","content":"..."}`
 3. Sidecar получает задачу → `agent_loop()`
-4. `agent_loop` отправляет статус `thinking` → вызывает `litellm.completion()`
-5. Если LLM хочет вызвать tool → статус `working` → `execute_tool()` → результат обратно в LLM
-6. Максимум 5 итераций tool calling (`MAX_TOOL_ITERATIONS`)
-7. Финальный ответ LLM отправляется как `{"type":"message"}` → статус `idle`
+4. Sidecar загружает последние 5 взаимодействий из `Memory`
+5. Отправляет статус `thinking` → вызывает Groq API с `tools`
+6. Если LLM вызывает tool → статус `working` → `execute_tool()` → результат обратно
+7. Максимум 5 итераций (`MAX_TOOL_ITERATIONS`)
+8. Финальный ответ → `{"type":"message"}` → сохраняется в `Memory` → статус `idle`
+
+### Инициатива
+
+Фоновая задача (`initiative_loop`) раз в 60 секунд проверяет бездействие. Если пользователь молчит >60 сек — агент сам пишет случайное приветствие.
+
+---
 
 ## 4. Структура директорий
 
 ```
-claude-agent/
+klodik/
 ├── src/                          # Frontend (React + TS)
 │   ├── components/
-│   │   └── Agent.tsx             # Главный компонент: спрайт, textarea, статус
+│   │   ├── Agent.tsx             # Главный компонент: спрайт, input, bubble
+│   │   └── Agent.test.tsx        # Тесты Agent
 │   ├── hooks/
-│   │   └── useWebSocket.ts       # Хук для WS-соединения
+│   │   ├── useWebSocket.ts       # Хук для WS-соединения
+│   │   └── useWebSocket.test.ts  # Тесты WS
 │   ├── test/
 │   │   └── setup.ts              # setup для vitest
 │   ├── App.tsx                   # Корневой компонент
@@ -75,100 +96,108 @@ claude-agent/
 │   └── index.css                 # Tailwind + кастомные keyframes
 ├── src-tauri/                    # Tauri (Rust)
 │   ├── Cargo.toml
-│   ├── tauri.conf.json           # Конфиг окна: transparent, undecorated, alwaysOnTop
+│   ├── tauri.conf.json           # Конфиг окна: transparent, undecorated, alwaysOnTop, 320×320
 │   ├── capabilities/
-│   │   └── default.json          # Permissions: window drag, position, etc.
+│   │   └── default.json          # Permissions
 │   └── src/
-│       └── main.rs               # Rust entrypoint (генерированный Tauri)
+│       └── main.rs               # Rust entrypoint
 ├── sidecar/                      # Python sidecar
 │   ├── requirements.txt          # Python-зависимости
-│   ├── main.py                   # FastAPI app + agent loop
+│   ├── .env                      # API-ключи и настройки (не коммитить)
+│   ├── config.py                 # Pydantic Settings (GROQ_API_KEY, MODEL, ...)
+│   ├── main.py                   # Entry point (uvicorn)
+│   ├── server.py                 # FastAPI app + WebSocket endpoint
+│   ├── agent.py                  # Agent loop + initiative_loop
+│   ├── memory.py                 # SQLite Memory
+│   ├── tools/
+│   │   ├── __init__.py           # Auto-discovery
+│   │   ├── base.py               # Tool decorators
+│   │   ├── registry.py           # ToolRegistry
+│   │   ├── file_tools.py         # read/write/search/mkdir/list/move
+│   │   ├── system_tools.py       # terminal/open_app/open_url/run_script
+│   │   ├── web_tools.py          # google/read_url
+│   │   └── input_tools.py        # mouse/keyboard (pyautogui)
 │   └── tests/
-│       └── test_main.py          # Тесты sidecar (pytest)
+│       ├── conftest.py           # Dummy GROQ_API_KEY для pytest
+│       └── test_main.py          # Тесты sidecar
+├── scripts/
+│   ├── dev.cjs                   # Единый скрипт запуска sidecar + tauri
+│   └── launch.py                 # Красивый лаунчер с выбором провайдера и модели
 ├── public/
-│   └── claude.svg                # Пиксельный спрайт агента
-├── PLAN.md                       # План разработки (фазы)
+│   ├── claude.svg                # Статичный спрайт
+│   └── claude_animated.lottie   # Анимированный спрайт
 ├── AGENTS.md                     # Этот файл
+├── README.md                     # Описание проекта (EN)
+├── README.ru.md                  # Описание проекта (RU)
 ├── package.json                  # JS-зависимости
 ├── vitest.config.ts              # Конфиг фронтенд-тестов
-└── vite.config.ts               # Vite config (host: 127.0.0.1)
+└── vite.config.ts                # Vite config
 ```
+
+---
 
 ## 5. Конвенции
 
 ### Нейминг
-- **Всегда английский** в коде (переменные, функции, файлы, коммиты)
+- **Английский** в коде (переменные, функции, файлы, коммиты)
 - React компоненты: `PascalCase.tsx`
 - Хуки: `camelCase.ts`, префикс `use`
 - Тесты: рядом с исходником, суффикс `.test.ts` / `.test.tsx`
 - Python: `snake_case.py`, классы `PascalCase`
 
 ### Code style
-- TypeScript: строгие типы, без `any` (если можно избежать)
+- TypeScript: строгие типы, без `any`
 - React: функциональные компоненты, хуки
-- CSS: Tailwind utility-first, кастомные анимации через `@keyframes` в `index.css`
-- Python: type hints (`dict[str, Any]`, `list[...]`), docstrings для функций
-- Никаких hardcoded secrets / API keys
+- CSS: Tailwind utility-first, кастомные анимации через `@keyframes`
+- Python: type hints, docstrings
 
 ### Коммиты
 - Формат: `type(scope): message` (Conventional Commits)
 - Примеры:
-  - `feat(sidecar): add search tool with os.walk`
-  - `fix(agent): remove invalid shadow field from tauri config`
-  - `test(ws): add useWebSocket hook tests`
-- **Каждый коммит должен проходить тесты** (sidecar + frontend)
+  - `feat(sidecar): add google search tool`
+  - `fix(agent): fix websocket disconnect handling`
 
-## 6. Тестирование (обязательно)
+---
 
-### Python sidecar (`sidecar/tests/`)
-Запуск: `cd sidecar && uv run pytest tests/`
+## 6. Тестирование
 
-**Что тестировать:**
-- `health` endpoint
-- WebSocket lifecycle (connect, disconnect, invalid JSON)
-- `agent_loop` — статусы `thinking` → `idle` при задаче
-- Каждый `execute_tool`:
-  - `terminal` (echo + error exit code)
-  - `read_file` (чтение temp-файла)
-  - `write_file` (запись + проверка содержимого)
-  - `search` (by name + by content)
-  - `unknown tool` (fallback)
+### Python sidecar
+Запуск: `cd sidecar && python -m pytest tests/`
 
-### Frontend (`src/**/*.test.ts{x}`)
+### Frontend
 Запуск: `pnpm test`
 
-**Что тестировать:**
-- `useWebSocket`: подключение, получение статусов, получение сообщений, `sendTask`
-- `Agent`: рендер, ввод текста, клик Send, Enter-отправка, блокировка пустого ввода, рендер спрайта
-- Новые компоненты — минимум smoke test
-
-**Правило: нет тестов → нет коммита.**
+---
 
 ## 7. Sidecar правила
 
-- `main.py` — единственный файл приложения. Если растёт >500 строк — рефакторить на модули (`tools.py`, `agent.py`)
-- `execute_tool` — **всегда** возвращает `str`, даже при ошибке (`f"Error: {e}"`)
-- `agent_loop` — **никогда** не блокирует event loop (все вызовы `completion()` — через sync в async, или `asyncio.to_thread` если нужно)
-- `search` tool — кроссплатформенный (`os.walk` + `fnmatch`, никаких `grep`/`find` на Windows)
+- `execute_tool` — **всегда** возвращает `str`, даже при ошибке
+- `agent_loop` — **никогда** не блокирует event loop (все sync вызовы через `asyncio.to_thread`)
+- `search` tool — кроссплатформенный (`os.walk` + `fnmatch`)
 - `write_file` — создаёт промежуточные директории через `os.makedirs`
-- `tool_calls` в `messages.append` — добавлять **только если они есть** (не `None`)
+- `tool_calls` в `messages.append` — добавлять **только если они есть**
+- `Memory.save_interaction()` — вызывать после финального ответа
+
+---
 
 ## 8. Frontend правила
 
-- `Agent.tsx` — единственный визуальный компонент. Остальное — хуки и утилиты.
+- `Agent.tsx` — единственный визуальный компонент
 - `data-tauri-drag-region` — на корневом div для drag окна
-- `data-tauri-no-drag` — на форму (textarea, button), чтобы не перетаскивать при вводе текста
-- Анимации — CSS keyframes, **не** Tailwind utilities (`animate-bounce`, `animate-pulse` — запрещены для спрайта)
-- Классы анимаций: `animate-agent-idle`, `animate-agent-thinking`, `animate-agent-working`, `animate-agent-success`, `animate-agent-error`
-- WebSocket URL: `ws://localhost:8765/ws` (не `127.0.0.1` — для consistency)
-- Все импорты React — через `from "react"` (не `React.*`)
+- `data-tauri-no-drag` — на input/form
+- WebSocket URL: `ws://localhost:8765/ws`
+- Импорты React — через `from "react"`
+- Ответный пузырь: появляется над input, плавно исчезает через N секунд
+
+---
 
 ## 9. Tauri / Rust правила
 
-- `tauri.conf.json` — валидировать после любого изменения (схема может отвергать поля)
-- Запрещённые поля (не поддерживаются v2): `shadow`
-- `capabilities/default.json` — добавлять permissions при необходимости (window API)
-- Cargo.toml: feature `window-effects` для прозрачных окон
+- `tauri.conf.json` — валидировать после изменений
+- Окно: `transparent`, `decorations: false`, `skipTaskbar: true`, `alwaysOnTop: true`
+- Поле `shadow` запрещено в Tauri v2 — не использовать
+
+---
 
 ## 10. Зависимости и окружение
 
@@ -178,58 +207,64 @@ claude-agent/
 pnpm install
 
 # Python
-uv venv sidecar\.venv
-uv pip install -r sidecar\requirements.txt --python sidecar\.venv\Scripts\python.exe
+python -m venv sidecar\.venv
+sidecar\.venv\Scripts\pip install -r sidecar\requirements.txt
+
+# Создать .env (скопировать из .env.example)
+copy .env.example sidecar\.env
 ```
 
 ### Запуск dev
 ```powershell
-# Terminal 1: sidecar
-sidecar\.venv\Scripts\python.exe sidecar\main.py
+# Красивый лаунчер с выбором провайдера и модели
+python scripts/launch.py
 
-# Terminal 2: frontend
-pnpm tauri dev
+# Или через pnpm
+pnpm launch
+
+# Классический единый скрипт
+pnpm dev:all
 ```
 
-### Предусловия
-- Ollama установлен и запущен на `localhost:11434`
-- Модель `llama3.2` (или та, что в `MODEL = "ollama/..."`) скачана: `ollama pull llama3.2`
+### Кроссплатформенность
+- `open_app` / `open_url` адаптируются под Windows (`start`), macOS (`open`), Linux (`xdg-open`)
+- `run_script` использует `sys.executable` вместо хардкода `python`
+- `pyautogui` требует доступ к экрану на macOS (System Preferences → Security)
+
+---
 
 ## 11. Что коммитить / не коммитить
 
 ### Коммитить
 - Исходный код (`src/`, `src-tauri/`, `sidecar/`)
-- Тесты (`*.test.ts`, `sidecar/tests/`)
-- Конфиги (`vite.config.ts`, `vitest.config.ts`, `postcss.config.mjs`, `tsconfig.json`)
-- `PLAN.md`, `AGENTS.md`, `requirements.txt`, `package.json`
-- `public/claude.svg` (спрайт)
+- Тесты, конфиги, `AGENTS.md`, `README.md`
+- `public/claude.svg`, `public/claude_animated.lottie`
 
 ### НЕ коммитить
-- `node_modules/`, `.venv/`, `target/` (Rust build)
-- `dist/`, `build/`
-- `.env` с секретами (хотя секретов и нет — всё локально)
-- Логи, `.log`
-- IDE-специфичные файлы (`.idea/`, `.vscode/` — если не shared config)
-
-## 12. Работа с AI-моделью
-
-- Модель: `ollama/llama3.2` (или другая, доступная в Ollama)
-- LiteLLM выступает адаптером: единый API для любой модели
-- `api_base` указывает на `http://localhost:11434`
-- Tool calling — через OpenAI-compatible формат (`tools` / `tool_calls`)
-- Если модель не поддерживает tool calling — агент будет просто отвечать текстом (fallback)
-- `MAX_TOOL_ITERATIONS = 5` — защита от бесконечных циклов
-
-## 13. Дорожная карта (из PLAN.md)
-
-| Фаза | Статус | Описание |
-|------|--------|----------|
-| 1 | ✅ | Инициализация проекта и подготовка среды |
-| 2 | ✅ | Overlay-окно на реальном рабочем столе |
-| 3 | ✅ | UI текстового поля и статус |
-| 4 | ✅ | Агентный луп и tool calling |
-| 5 | ✅ | Анимации и полировка |
+- `node_modules/`, `.venv/`, `target/`, `dist/`, `build/`
+- `.env`, логи, IDE-файлы (кроме shared `.vscode/`)
+- `sidecar/memory.db`
 
 ---
 
-*Последнее обновление: 2026-06-08*
+## 12. Работа с AI-моделью
+
+Sidecar использует **litellm** — единый интерфейс для множества провайдеров.
+
+| Провайдер | Формат модели | Ключ |
+|-----------|--------------|------|
+| Groq | `groq/llama-3.3-70b-versatile` | `GROQ_API_KEY` |
+| OpenAI | `gpt-4o` | `OPENAI_API_KEY` |
+| Gemini | `gemini/gemini-1.5-pro` | `GEMINI_API_KEY` |
+| Ollama | `ollama/llama3` | не нужен |
+
+- **Tool calling**: OpenAI-compatible формат (`tools` / `tool_calls`) — поддерживается Groq, OpenAI, Gemini; для Ollama ограничена
+- **Temperature**: 0.7
+- **Max tokens**: 512 (краткие ответы)
+- **Промпт**: строго русский, живой стиль, 1–2 предложения, без корпоративщины
+- **MAX_TOOL_ITERATIONS = 5**
+- **Fallback**: если tool calling не сработал — просто текстовый ответ
+
+---
+
+*Последнее обновление: 2026-06-08 (рефакторинг)*
