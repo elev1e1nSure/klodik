@@ -6,14 +6,20 @@ html, body, #root {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  outline: none;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
 #root {
-  background: transparent;
+  background: transparent !important;
+}
+
+* {
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
 body {
