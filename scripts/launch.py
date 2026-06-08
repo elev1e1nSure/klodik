@@ -1,0 +1,751 @@
+#!/usr/bin/env python3
+"""Beautiful launcher for Klodik — Desktop AI Agent.
+
+Supports multiple LLM providers:
+  - Groq (cloud, fast)
+  - OpenAI (gpt-4o, etc.)
+  - Google Gemini
+  - Ollama (local models)
+
+Usage:
+    python scripts/launch.py
+
+Prerequisites:
+    - Node.js + pnpm
+    - Python 3.12+ with sidecar/.venv
+    - Rust (for Tauri)
+    - .env configured with API key for chosen provider
+"""
+
+from __future__ import annotations
+
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+# Force UTF-8 on Windows console to prevent UnicodeEncodeError in rich
+if sys.platform == "win32":
+    import ctypes
+    _kernel32 = ctypes.windll.kernel32
+    _kernel32.SetConsoleOutputCP(65001)
+    _kernel32.SetConsoleCP(65001)
+    # Reopen stdout/stderr with UTF-8 if still on cp1252
+    if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf_8"):
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf_8"):
+        import io
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+
+try:
+    import requests
+except ImportError:
+    requests = None  # type: ignore[assignment]
+
+try:
+    from rich.console import Console, Group
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.prompt import Prompt, Confirm
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from rich.text import Text
+    from rich.rule import Rule
+    from rich import box
+except ImportError:
+    print("ERROR: 'rich' is not installed. Run: pip install rich")
+    sys.exit(1)
+
+console = Console()
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ENV_PATH = PROJECT_ROOT / ".env"
+SIDECAR_DIR = PROJECT_ROOT / "sidecar"
+
+# ---------------------------------------------------------------------------
+# Provider presets
+# ---------------------------------------------------------------------------
+PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
+    "groq": {
+        "icon": "⚡",
+        "color": "bold bright_magenta",
+        "description": "Groq Cloud — blazing fast inference",
+        "models": [
+            "groq/llama-3.3-70b-versatile",
+            "groq/llama-3.1-8b-instant",
+            "groq/mixtral-8x7b-32768",
+            "groq/gemma2-9b-it",
+        ],
+        "key_env": "GROQ_API_KEY",
+        "key_hint": "https://console.groq.com/keys",
+        "needs_key": True,
+    },
+    "openai": {
+        "icon": "🌐",
+        "color": "bold bright_green",
+        "description": "OpenAI — GPT-4o, GPT-4o-mini",
+        "models": [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-3.5-turbo",
+        ],
+        "key_env": "OPENAI_API_KEY",
+        "key_hint": "https://platform.openai.com/api-keys",
+        "needs_key": True,
+    },
+    "gemini": {
+        "icon": "💎",
+        "color": "bold bright_blue",
+        "description": "Google Gemini — 1.5 Pro / Flash",
+        "models": [
+            "gemini/gemini-1.5-pro",
+            "gemini/gemini-1.5-flash",
+            "gemini/gemini-1.5-pro-latest",
+        ],
+        "key_env": "GEMINI_API_KEY",
+        "key_hint": "https://aistudio.google.com/app/apikey",
+        "needs_key": True,
+    },
+    "ollama": {
+        "icon": "🦙",
+        "color": "bold bright_yellow",
+        "description": "Ollama — local models (llama3, mistral, etc.)",
+        "models": [],  # fetched dynamically
+        "key_env": None,
+        "key_hint": "http://localhost:11434",
+        "needs_key": False,
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _run(cmd: list[str] | str, cwd: Path | None = None, capture: bool = True) -> tuple[int, str, str]:
+    """Run a shell command and return (returncode, stdout, stderr)."""
+    shell = isinstance(cmd, str)
+    if not shell and sys.platform == "win32":
+        # Windows subprocess without shell does not resolve .cmd/.bat
+        resolved = shutil.which(cmd[0])
+        if resolved:
+            cmd = [resolved] + cmd[1:]
+    result = subprocess.run(
+        cmd,
+        shell=shell,
+        cwd=cwd,
+        capture_output=capture,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+def _detect_venv_python() -> Path | None:
+    """Find the Python executable inside sidecar/.venv."""
+    candidates = [
+        SIDECAR_DIR / ".venv" / "Scripts" / "python.exe",
+        SIDECAR_DIR / ".venv_new" / "Scripts" / "python.exe",
+        SIDECAR_DIR / "venv" / "Scripts" / "python.exe",
+        SIDECAR_DIR / ".venv" / "bin" / "python",
+        SIDECAR_DIR / "venv" / "bin" / "python",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    # Fallback: system python if it has required packages
+    return Path(sys.executable) if sys.executable else None
+
+
+def _detect_lang_by_ip() -> str:
+    """Detect language by geo IP. Returns 'ru' for RU/BY/KZ/UA, else 'en'."""
+    if requests is None:
+        return "en"
+    try:
+        r = requests.get("https://ipapi.co/json/", timeout=5)
+        r.raise_for_status()
+        data = r.json()
+        country = data.get("country_code", "").upper()
+        if country in {"RU", "BY", "KZ", "UA"}:
+            return "ru"
+    except Exception:
+        pass
+    return "en"
+
+
+def _load_env() -> dict[str, str]:
+    """Parse current .env file into a dict."""
+    env: dict[str, str] = {}
+    if ENV_PATH.exists():
+        with open(ENV_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                env[key.strip()] = val.strip()
+    return env
+
+
+def _save_env(env: dict[str, str]) -> None:
+    """Write dict back to .env file, preserving comments."""
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    if ENV_PATH.exists():
+        with open(ENV_PATH, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.rstrip("\n")
+                stripped = line.strip()
+                if stripped.startswith("#") or "=" not in stripped:
+                    lines.append(line)
+                    continue
+                key, _, _ = stripped.partition("=")
+                key = key.strip()
+                if key in env:
+                    lines.append(f"{key}={env[key]}")
+                    seen.add(key)
+                else:
+                    lines.append(line)
+
+    for k, v in env.items():
+        if k not in seen:
+            lines.append(f"{k}={v}")
+
+    with open(ENV_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _fetch_ollama_models(base_url: str = "http://localhost:11434") -> list[str]:
+    """Fetch available models from local Ollama instance."""
+    if requests is None:
+        return []
+    try:
+        r = requests.get(f"{base_url}/api/tags", timeout=3)
+        r.raise_for_status()
+        data = r.json()
+        models = [m.get("name", m.get("model", "")) for m in data.get("models", [])]
+        return [f"ollama/{m}" for m in models if m]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# UI screens
+# ---------------------------------------------------------------------------
+
+def _show_welcome() -> None:
+    """Display the beautiful welcome banner."""
+    banner = Text(
+        r"""
+⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⡿⠿⣿⣿⣿⣿⣿⣿⣿⠿⢿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⡁⠀⢸⣿⣿⣿⣿⣿⣇⠀⠀⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⣶⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣶⣶⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠙⠛⠛⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠛⠛⠛⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠿⣿⣿⡿⠿⠿⣿⣿⡿⢿⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⣿⣿⡇⠀⠀⣿⣿⡇⢸⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠘⠛⠛⠀⠛⠛⠃⠀⠀⠛⠛⠃⠘⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀
+        """,
+        style="bold bright_cyan",
+    )
+    subtitle = Text(
+        "Desktop AI Agent  —  Pixel-art companion for your screen",
+        style="dim italic",
+    )
+    console.print(Panel(
+        Text.assemble(banner, "\n", subtitle),
+        title="[bold bright_white]🤖  Klodik Launcher[/]",
+        subtitle="[dim]v0.1.0[/]",
+        border_style="bright_cyan",
+        box=box.ROUNDED,
+        padding=(1, 4),
+    ))
+
+
+def _check_prerequisites() -> dict[str, tuple[bool, str]]:
+    """Check Node, pnpm, Python venv, Rust."""
+    results: dict[str, tuple[bool, str]] = {}
+
+    # Node.js
+    rc, out, _ = _run(["node", "--version"])
+    results["Node.js"] = (rc == 0, out.strip() if rc == 0 else "not found")
+
+    # pnpm
+    rc, out, _ = _run(["pnpm", "--version"])
+    results["pnpm"] = (rc == 0, out.strip() if rc == 0 else "not found")
+
+    # Python venv
+    py = _detect_venv_python()
+    if py:
+        rc, out, _ = _run([str(py), "--version"])
+        results["Python venv"] = (rc == 0, out.strip() if rc == 0 else "error")
+    else:
+        results["Python venv"] = (False, "venv not found — create with: python -m venv sidecar\\.venv")
+
+    # Rust
+    rc, out, _ = _run(["rustc", "--version"])
+    results["Rust"] = (rc == 0, out.strip() if rc == 0 else "not found")
+
+    return results
+
+
+def _render_prerequisites() -> None:
+    """Print prerequisite check results as a table."""
+    env = _load_env()
+    lang = env.get("LAUNCHER_LANG", "ru")
+    results = _check_prerequisites()
+    table = Table(
+        title=f"[bold]{_t('system_check', lang)}[/]",
+        box=box.SIMPLE_HEAD,
+        show_header=False,
+        padding=(0, 2),
+    )
+    table.add_column("Component", style="bold")
+    table.add_column("Status", min_width=30)
+
+    for name, (ok, detail) in results.items():
+        icon = "[green]✓[/]" if ok else "[red]✗[/]"
+        style = "green" if ok else "red"
+        table.add_row(f"{icon} {name}", f"[{style}]{detail}[/]")
+
+    console.print(table)
+    console.print()
+
+    if not all(ok for ok, _ in results.values()):
+        console.print(Panel(
+            "[yellow]Some prerequisites are missing.[/]\n"
+            "Fix them before launching, or the app may fail to start.",
+            border_style="yellow",
+        ))
+        console.print()
+
+
+def _render_env_status(env: dict[str, str]) -> None:
+    """Show current .env configuration."""
+    lang = env.get("LAUNCHER_LANG", "ru")
+    provider = env.get("PROVIDER", "groq")
+    model = env.get("MODEL", "—")
+
+    preset = PROVIDER_PRESETS.get(provider, {})
+    icon = preset.get("icon", "🔧")
+    key_env = preset.get("key_env")
+    key_set = f"[green]{_t('set', lang)}[/]" if (key_env and env.get(key_env)) or not key_env else f"[red]{_t('missing', lang)}[/]"
+
+    table = Table(title=f"[bold]{_t('current_config', lang)}[/]", box=box.SIMPLE, show_header=False)
+    table.add_column("Setting", style="bold cyan")
+    table.add_column("Value")
+    table.add_row(_t("provider", lang), f"{icon} {provider}")
+    table.add_row(_t("model", lang), model)
+    table.add_row(_t("api_key", lang), key_set)
+    console.print(table)
+    console.print()
+
+
+def _select_provider(env: dict[str, str]) -> dict[str, str] | None:
+    """Interactive provider & model selection. Returns None if cancelled."""
+    lang = env.get("LAUNCHER_LANG", "ru")
+    console.print(Rule(f"[bold]{_t('provider_selection', lang)}[/]", style="cyan"))
+
+    # Build provider table
+    table = Table(box=box.ROUNDED, show_header=True, padding=(0, 1))
+    table.add_column("#", style="bold", justify="center")
+    table.add_column(_t("provider", lang), style="bold")
+    table.add_column("Description", style="dim")
+    table.add_column("Key Required", justify="center")
+
+    names = list(PROVIDER_PRESETS.keys())
+    for i, name in enumerate(names, 1):
+        p = PROVIDER_PRESETS[name]
+        icon = p["icon"]
+        key_req = "[red]yes[/]" if p["needs_key"] else "[green]no[/]"
+        table.add_row(str(i), f"{icon} {name}", p["description"], key_req)
+    table.add_row("0", _t("back", lang), "", "")
+
+    console.print(table)
+    console.print()
+
+    choice = Prompt.ask(
+        _t("select_provider", lang),
+        choices=[str(i) for i in range(0, len(names) + 1)],
+        default="1",
+    )
+    if choice == "0":
+        return None
+    provider = names[int(choice) - 1]
+    preset = PROVIDER_PRESETS[provider]
+    console.print(f"\n[bold]{preset['icon']} Selected:[/] [{preset['color']}]{provider}[/]\n")
+
+    # Pick model
+    models = preset["models"].copy()
+    if provider == "ollama":
+        with console.status("[yellow]Checking local Ollama...[/]"):
+            ollama_models = _fetch_ollama_models(env.get("OLLAMA_BASE_URL", "http://localhost:11434"))
+        if ollama_models:
+            models = ollama_models
+        else:
+            console.print("[yellow]⚠ Ollama not detected on localhost:11434.[/]")
+            console.print("[dim]Enter a model name manually (e.g. ollama/llama3)[/]")
+            models = []
+
+    if models:
+        model_table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+        model_table.add_column("#", justify="right")
+        model_table.add_column(_t("model", lang))
+        for i, m in enumerate(models, 1):
+            model_table.add_row(str(i), m)
+        model_table.add_row("0", _t("back", lang))
+        console.print(model_table)
+        console.print()
+        model_choice = Prompt.ask(
+            _t("select_model", lang),
+            choices=[str(i) for i in range(0, len(models) + 1)],
+            default="1",
+        )
+        if model_choice == "0":
+            return None
+        model = models[int(model_choice) - 1]
+    else:
+        model = Prompt.ask("Model name", default="ollama/llama3")
+
+    # API key
+    if preset["needs_key"]:
+        key_env = preset["key_env"]
+        current_key = env.get(key_env, "")
+        if current_key and not current_key.startswith("your_"):
+            masked = current_key[:8] + "***" if len(current_key) > 10 else "***"
+            console.print(f"[dim]Current {key_env}: {masked}[/]")
+        else:
+            console.print(f"[yellow]⚠ {key_env} not set.[/]")
+        new_key = Prompt.ask(
+            _t("api_key_prompt", lang),
+            password=True,
+            default=current_key,
+        )
+        if new_key:
+            env[key_env] = new_key
+
+    # Temperature / max_tokens (optional quick config)
+    if Confirm.ask(f"[dim]{_t('adjust_params', lang)}[/]", default=False):
+        temp = Prompt.ask(_t("temp", lang), default=env.get("TEMPERATURE", "0.7"))
+        max_tok = Prompt.ask(_t("max_tokens", lang), default=env.get("MAX_TOKENS", "512"))
+        env["TEMPERATURE"] = temp
+        env["MAX_TOKENS"] = max_tok
+
+    env["PROVIDER"] = provider
+    env["MODEL"] = model
+    return env
+
+
+def _launch_app(py: Path, env: dict[str, str]) -> None:
+    """Start sidecar + Tauri dev mode."""
+    is_win = platform.system() == "Windows"
+    lang = env.get("LAUNCHER_LANG", "ru")
+
+    # Sidecar (no shell — cleaner process tree)
+    sidecar = subprocess.Popen(
+        [str(py), str(SIDECAR_DIR / "main.py")],
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    # Tauri (resolve pnpm path on Windows)
+    tauri_cmd = ["pnpm", "tauri", "dev"]
+    if is_win:
+        pnpm_path = shutil.which("pnpm")
+        if pnpm_path:
+            tauri_cmd = [pnpm_path, "tauri", "dev"]
+    tauri = subprocess.Popen(
+        tauri_cmd,
+        cwd=PROJECT_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    console.print(Panel(
+        f"[green]🚀 {_t('launching', lang)}[/]\n"
+        f"[dim]{_t('sidecar_pid', lang)}: {sidecar.pid} | {_t('tauri_pid', lang)}: {tauri.pid}[/]\n"
+        f"[dim]{_t('ctrl_c', lang)}.[/]",
+        border_style="green",
+    ))
+
+    def _force_kill(proc: subprocess.Popen) -> None:
+        if proc.poll() is not None:
+            return
+        if is_win:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+            )
+        else:
+            proc.kill()
+
+    try:
+        while True:
+            if sidecar.poll() is None:
+                line = sidecar.stdout.readline()  # type: ignore[union-attr]
+                if line:
+                    console.print(f"[cyan][sidecar][/] {line.rstrip()}")
+            if tauri.poll() is None:
+                line = tauri.stdout.readline()  # type: ignore[union-attr]
+                if line:
+                    console.print(f"[magenta][tauri][/] {line.rstrip()}")
+            if sidecar.poll() is not None and tauri.poll() is not None:
+                break
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        console.print(f"\n[yellow]{_t('shutting_down', lang)}[/]")
+        sidecar.terminate()
+        tauri.terminate()
+        # Wait gracefully, then force-kill
+        try:
+            sidecar.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            _force_kill(sidecar)
+        try:
+            tauri.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            _force_kill(tauri)
+
+
+# ---------------------------------------------------------------------------
+# i18n
+# ---------------------------------------------------------------------------
+
+_TEXTS: dict[str, dict[str, str]] = {
+    "en": {
+        "menu_title": "Main Menu",
+        "launch": "🚀  Launch Klodik",
+        "configure": "⚙️  Configure provider / model",
+        "language": "🌐  Switch language",
+        "exit": "👋  Exit",
+        "choose": "Choose option",
+        "system_check": "System Check",
+        "current_config": "Current Config",
+        "provider": "Provider",
+        "model": "Model",
+        "api_key": "API Key",
+        "set": "✓ set",
+        "missing": "✗ missing",
+        "launching": "Launching Klodik...",
+        "sidecar_pid": "Sidecar PID",
+        "tauri_pid": "Tauri PID",
+        "ctrl_c": "Press Ctrl+C to stop",
+        "shutting_down": "Shutting down...",
+        "no_venv": "Could not find Python in sidecar/.venv",
+        "create_venv": "Create it: python -m venv sidecar\\.venv",
+        "config_saved": "✓ Configuration saved.",
+        "bye": "Goodbye! Run again when ready.",
+        "provider_selection": "Provider Selection",
+        "select_provider": "Select provider",
+        "select_model": "Select model",
+        "api_key_prompt": "Paste your API key (Enter to keep current)",
+        "adjust_params": "Adjust generation parameters?",
+        "temp": "Temp",
+        "max_tokens": "Max tokens",
+        "lang_switch": "Select language",
+        "lang_en": "English",
+        "lang_ru": "Русский",
+        "back": "←  Back",
+        "invalid_choice": "Invalid choice. Try again.",
+    },
+    "ru": {
+        "menu_title": "Главное меню",
+        "launch": "🚀  Запустить Клодика",
+        "configure": "⚙️  Настроить провайдер / модель",
+        "language": "🌐  Сменить язык",
+        "exit": "👋  Выход",
+        "choose": "Выбери пункт",
+        "system_check": "Проверка системы",
+        "current_config": "Текущая конфигурация",
+        "provider": "Провайдер",
+        "model": "Модель",
+        "api_key": "API-ключ",
+        "set": "✓ есть",
+        "missing": "✗ нет",
+        "launching": "Запуск Клодика...",
+        "sidecar_pid": "Sidecar PID",
+        "tauri_pid": "Tauri PID",
+        "ctrl_c": "Ctrl+C — остановить",
+        "shutting_down": "Завершаю работу...",
+        "no_venv": "Не нашёл Python в sidecar/.venv",
+        "create_venv": "Создай: python -m venv sidecar\\.venv",
+        "config_saved": "✓ Настройки сохранены.",
+        "bye": "Пока! Запускай снова, когда будешь готов.",
+        "provider_selection": "Выбор провайдера",
+        "select_provider": "Выбери провайдера",
+        "select_model": "Выбери модель",
+        "api_key_prompt": "Вставь API-ключ (Enter — оставить текущий)",
+        "adjust_params": "Настроить параметры генерации?",
+        "temp": "Температура",
+        "max_tokens": "Макс. токенов",
+        "lang_switch": "Выбери язык",
+        "lang_en": "English",
+        "lang_ru": "Русский",
+        "back": "←  Назад",
+        "invalid_choice": "Неверный выбор. Попробуй ещё.",
+    },
+}
+
+
+def _t(key: str, lang: str) -> str:
+    """Get translated string."""
+    return _TEXTS.get(lang, _TEXTS["en"]).get(key, key)
+
+
+# ---------------------------------------------------------------------------
+# Main menu
+# ---------------------------------------------------------------------------
+
+def _show_menu(env: dict[str, str]) -> str | None:
+    """Display main menu and return user choice."""
+    lang = env.get("LAUNCHER_LANG", "ru")
+    provider = env.get("PROVIDER", "groq")
+    model = env.get("MODEL", "—")
+    preset = PROVIDER_PRESETS.get(provider, {})
+
+    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+    table.add_column("#", justify="center", style="bold cyan")
+    table.add_column("Option")
+    table.add_row("1", _t("launch", lang))
+    table.add_row("2", _t("configure", lang))
+    table.add_row("3", _t("language", lang))
+    table.add_row("4", _t("exit", lang))
+
+    # Compact config preview above menu
+    config_line = (
+        f"[dim]{_t('provider', lang)}:[/] {preset.get('icon', '🔧')} {provider}  |  "
+        f"[dim]{_t('model', lang)}:[/] {model}"
+    )
+    console.print(Panel(
+        table,
+        title=f"[bold]{_t('menu_title', lang)}[/]  ·  {config_line}",
+        border_style="bright_cyan",
+        padding=(0, 2),
+    ))
+    console.print()
+
+    choice = Prompt.ask(
+        f"{_t('choose', lang)}",
+        choices=["1", "2", "3", "4"],
+        default="1",
+    )
+    return choice
+
+
+def _switch_language(env: dict[str, str]) -> dict[str, str] | None:
+    """Interactive language switcher. Returns None if cancelled."""
+    lang = env.get("LAUNCHER_LANG", "ru")
+    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+    table.add_column("#", justify="center", style="bold cyan")
+    table.add_column("Language")
+    table.add_row("1", _t("lang_en", lang))
+    table.add_row("2", _t("lang_ru", lang))
+    table.add_row("0", _t("back", lang))
+    console.print(table)
+    console.print()
+
+    choice = Prompt.ask(
+        _t("lang_switch", lang),
+        choices=["0", "1", "2"],
+        default="2" if lang == "ru" else "1",
+    )
+    if choice == "0":
+        return None
+    new_lang = "en" if choice == "1" else "ru"
+    env["LAUNCHER_LANG"] = new_lang
+    _save_env(env)
+    console.print(f"[green]✓ Language: {_t('lang_en' if new_lang == 'en' else 'lang_ru', new_lang)}[/]\n")
+    return env
+
+
+def main() -> None:
+    _show_welcome()
+    _render_prerequisites()
+
+    env = _load_env()
+
+    # Auto-detect language on first run
+    if "LAUNCHER_LANG" not in env:
+        detected = _detect_lang_by_ip()
+        env["LAUNCHER_LANG"] = detected
+        _save_env(env)
+        console.print(f"[dim]Detected language: {_t('lang_en' if detected == 'en' else 'lang_ru', detected)}[/]")
+
+    has_key = any(
+        env.get(p["key_env"], "") and not env[p["key_env"]].startswith("your_")
+        for p in PROVIDER_PRESETS.values()
+        if p["needs_key"]
+    )
+
+    # If first run (no config), force config first
+    if not env or not has_key:
+        lang = env.get("LAUNCHER_LANG", "ru")
+        console.print(Panel(
+            "[yellow]No valid .env found or API keys missing.[/]\n"
+            "Let's configure your provider and model."
+            if lang == "en" else
+            "[yellow]Не найден .env или API-ключи отсутствуют.[/]\n"
+            "Настроим провайдера и модель.",
+            border_style="yellow",
+        ))
+        console.print()
+        new_env = _select_provider(env)
+        if new_env is None:
+            # User cancelled — keep defaults and go to menu
+            new_env = env
+        env = new_env
+        _save_env(env)
+        console.print(f"[green]{_t('config_saved', env.get('LAUNCHER_LANG', 'ru'))}[/]\n")
+
+    # Main loop
+    while True:
+        choice = _show_menu(env)
+        if choice == "1":
+            break  # Launch
+        elif choice == "2":
+            new_env = _select_provider(env)
+            if new_env is not None:
+                env = new_env
+                _save_env(env)
+                console.print(f"[green]{_t('config_saved', env.get('LAUNCHER_LANG', 'ru'))}[/]\n")
+            else:
+                console.print()
+        elif choice == "3":
+            new_env = _switch_language(env)
+            if new_env is not None:
+                env = new_env
+            else:
+                console.print()
+        elif choice == "4":
+            console.print(f"[dim]{_t('bye', env.get('LAUNCHER_LANG', 'ru'))}[/]")
+            sys.exit(0)
+        else:
+            console.print(f"[red]{_t('invalid_choice', env.get('LAUNCHER_LANG', 'ru'))}[/]\n")
+
+    # Launch
+    py = _detect_venv_python()
+    if not py:
+        lang = env.get("LAUNCHER_LANG", "ru")
+        console.print(f"[red]{_t('no_venv', lang)}[/]")
+        console.print(f"[dim]{_t('create_venv', lang)}[/]")
+        sys.exit(1)
+
+    _launch_app(py, env)
+
+
+if __name__ == "__main__":
+    main()
