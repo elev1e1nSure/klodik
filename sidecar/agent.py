@@ -110,6 +110,7 @@ async def agent_loop(task: str, websocket: Any):
             kwargs["api_key"] = settings.openai_api_key
         elif p == "gemini":
             kwargs["api_key"] = settings.gemini_api_key
+            kwargs["api_base"] = "https://generativelanguage.googleapis.com/v1beta"
         elif p == "openrouter":
             kwargs["api_key"] = settings.openrouter_api_key
             kwargs["api_base"] = settings.openrouter_base_url
