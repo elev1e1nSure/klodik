@@ -30,7 +30,7 @@ class Settings(BaseSettings):
         description="LLM provider: groq, openai, gemini, openrouter, ollama",
     )
     model: str = Field(
-        default="llama-3.3-70b-versatile",
+        default="groq/llama-3.3-70b-versatile",
         alias="MODEL",
         description="Model identifier (provider-prefixed for litellm)",
     )

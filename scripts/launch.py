@@ -77,19 +77,19 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "color": "bold bright_magenta",
         "description": "Groq Cloud — blazing fast inference",
         "models": [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "openai/gpt-oss-120b",
-            "openai/gpt-oss-20b",
+            "groq/llama-3.3-70b-versatile",
+            "groq/llama-3.1-8b-instant",
+            "groq/openai/gpt-oss-120b",
+            "groq/openai/gpt-oss-20b",
             "groq/compound",
             "groq/compound-mini",
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-            "qwen/qwen3-32b",
+            "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+            "groq/qwen/qwen3-32b",
         ],
         "key_env": "GROQ_API_KEY",
         "key_hint": "https://console.groq.com/keys",
         "needs_key": True,
-        "auto_model": "llama-3.3-70b-versatile",
+        "auto_model": "groq/llama-3.3-70b-versatile",
     },
     "openai": {
         "icon": "🌐",
@@ -289,7 +289,7 @@ def _fetch_provider_models(provider: str, api_key: str) -> list[str]:
                 timeout=5,
             )
             r.raise_for_status()
-            return [m["id"] for m in r.json().get("data", []) if m.get("id")]
+            return [f"groq/{m['id']}" for m in r.json().get("data", []) if m.get("id")]
         elif provider == "openai":
             r = requests.get(
                 "https://api.openai.com/v1/models",
@@ -299,8 +299,8 @@ def _fetch_provider_models(provider: str, api_key: str) -> list[str]:
             r.raise_for_status()
             # Filter to chat models
             return sorted(
-                [m["id"] for m in r.json().get("data", [])
-                 if m.get("id", "").startswith("gpt-")],
+                [f"openai/{m['id']}" for m in r.json().get("data", [])
+                 if m.get("id", "").startswith("gpt-") or m.get("id", "").startswith("o")],
                 reverse=True,
             )
         elif provider == "openrouter":
