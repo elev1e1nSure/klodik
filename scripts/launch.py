@@ -627,6 +627,10 @@ _TEXTS: dict[str, dict[str, str]] = {
         "db_cleared": "Memory cleared",
         "db_empty": "No conversations yet",
         "db_count": "{count} conversations",
+        "api_key_menu": "API key",
+        "api_key_current": "Current key",
+        "api_key_paste": "Paste API key",
+        "api_key_saved": "API key saved",
         "invalid_choice": "Invalid choice. Try again.",
     },
     "ru": {
@@ -677,6 +681,10 @@ _TEXTS: dict[str, dict[str, str]] = {
         "db_cleared": "Память очищена",
         "db_empty": "Пока нет диалогов",
         "db_count": "{count} диалогов",
+        "api_key_menu": "API-ключ",
+        "api_key_current": "Текущий ключ",
+        "api_key_paste": "Вставь API-ключ",
+        "api_key_saved": "Ключ сохранён",
         "invalid_choice": "Неверный выбор. Попробуй ещё.",
     },
 }
@@ -781,7 +789,8 @@ def _show_menu(env: dict[str, str]) -> str | None:
         Text.assemble(("[ 2 ]", "bold cyan"), "  ⚙️  ", _t("configure", lang)),
         Text.assemble(("[ 3 ]", "bold cyan"), "  🌐  ", _t("language", lang)),
         Text.assemble(("[ 4 ]", "bold cyan"), "  🧠  ", _t("db_manage", lang)),
-        Text.assemble(("[ 5 ]", "bold cyan"), "  👋  ", _t("exit", lang)),
+        Text.assemble(("[ 5 ]", "bold cyan"), "  �  ", _t("api_key_menu", lang)),
+        Text.assemble(("[ 6 ]", "bold cyan"), "  �  ", _t("exit", lang)),
     ]
 
     config_line = (
@@ -797,7 +806,7 @@ def _show_menu(env: dict[str, str]) -> str | None:
 
     choice = Prompt.ask(
         f"{_t('choose', lang)}",
-        choices=["1", "2", "3", "4", "5"],
+        choices=["1", "2", "3", "4", "5", "6"],
         default="1",
     )
     return choice
@@ -811,6 +820,40 @@ def _switch_language(env: dict[str, str]) -> dict[str, str]:
     _save_env(env)
     console.print(f"[green]✓ {_t('lang_en' if new_lang == 'en' else 'lang_ru', new_lang)}[/]\n")
     return env
+
+
+def _enter_api_key(env: dict[str, str]) -> None:
+    """Quickly enter API key for the current provider."""
+    lang = env.get("LAUNCHER_LANG", "ru")
+    provider = env.get("PROVIDER", "groq")
+    preset = PROVIDER_PRESETS.get(provider, {})
+    key_env = preset.get("key_env")
+
+    if not key_env:
+        console.print(f"[yellow]{provider} does not need an API key.[/]\n")
+        return
+
+    current_key = env.get(key_env, "")
+    if current_key and not current_key.startswith("your_"):
+        masked = current_key[:8] + "***" if len(current_key) > 10 else "***"
+        console.print(f"[dim]{_t('api_key_current', lang)} ({key_env}): {masked}[/]")
+    else:
+        console.print(f"[yellow]⚠ {key_env} not set.[/]")
+        hint = preset.get("key_hint", "")
+        if hint:
+            console.print(f"[dim]Get it at: {hint}[/]")
+
+    new_key = Prompt.ask(
+        _t("api_key_paste", lang),
+        password=True,
+        default="",
+    )
+    if new_key:
+        env[key_env] = new_key
+        _save_env(env)
+        console.print(f"[green]✓ {_t('api_key_saved', lang)} ({key_env})[/]\n")
+    else:
+        console.print("[dim]No changes.[/]\n")
 
 
 def _manage_memory(env: dict[str, str]) -> None:
@@ -940,6 +983,8 @@ def main() -> None:
         elif choice == "4":
             _manage_memory(env)
         elif choice == "5":
+            _enter_api_key(env)
+        elif choice == "6":
             console.print(f"[dim]{_t('bye', env.get('LAUNCHER_LANG', 'ru'))}[/]")
             sys.exit(0)
         else:
