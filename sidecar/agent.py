@@ -10,6 +10,7 @@ from typing import Any
 from litellm import completion
 
 from config import settings
+from log import agent, error, warn, debug
 from memory import memory
 from tools import registry
 
@@ -59,7 +60,7 @@ async def agent_loop(task: str, websocket: Any):
     """
     from connection import manager
 
-    print(f"[Agent] Loop started for task: {task!r}")
+    agent(f"Loop started: {task!r}")
     await manager.send_personal_message(
         json.dumps({"type": "status", "content": "thinking"}), websocket
     )
@@ -93,13 +94,13 @@ async def agent_loop(task: str, websocket: Any):
 
     try:
         for _ in range(MAX_TOOL_ITERATIONS):
-            print("[Agent] Calling LLM...")
+            agent("Calling LLM...")
             try:
                 response = await asyncio.to_thread(completion, **_build_completion_kwargs())
             except Exception as api_err:
                 err_type = type(api_err).__name__
                 err_msg = str(api_err)
-                print(f"[Agent] API error: {err_type}: {err_msg}")
+                error(f"API error: {err_type}: {err_msg}")
                 if "rate limit" in err_msg.lower() or "429" in err_msg:
                     await manager.send_personal_message(
                         json.dumps({"type": "error", "content": "Достигнут лимит API. Подожди минуту."}),
@@ -114,7 +115,7 @@ async def agent_loop(task: str, websocket: Any):
                     json.dumps({"type": "status", "content": "idle"}), websocket
                 )
                 return
-            print("[Agent] LLM responded")
+            agent("LLM responded")
 
             msg = response.choices[0].message
             assistant_msg: dict[str, Any] = {
@@ -129,9 +130,9 @@ async def agent_loop(task: str, websocket: Any):
             if not tool_calls:
                 # Final answer
                 content = msg.content or "Не получилось ответить."
-                print(f"[LLM raw] {content!r}")
+                debug(f"LLM raw: {content!r}")
                 content = re.sub(r"^(?i:echo)\s*[:\-]?\s*", "", content).strip()
-                print(f"[LLM clean] {content!r}")
+                debug(f"LLM clean: {content!r}")
                 await manager.send_personal_message(
                     json.dumps({"type": "message", "content": content}),
                     websocket,
@@ -149,7 +150,7 @@ async def agent_loop(task: str, websocket: Any):
                 try:
                     fn_args = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError as e:
-                    print(f"[Agent] Malformed tool arguments: {e}")
+                    warn(f"Malformed tool arguments: {e}")
                     await manager.send_personal_message(
                         json.dumps({"type": "error", "content": f"Invalid tool arguments for {fn_name}"}),
                         websocket,
@@ -163,9 +164,9 @@ async def agent_loop(task: str, websocket: Any):
                     })
                     continue
 
-                print(f"[Agent] Executing tool: {fn_name}")
+                agent(f"Executing tool: {fn_name}")
                 result = await asyncio.to_thread(registry.execute, fn_name, fn_args)
-                print(f"[Agent] Tool result: {result[:200]!r}...")
+                debug(f"Tool result: {result[:200]!r}...")
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -183,7 +184,7 @@ async def agent_loop(task: str, websocket: Any):
             await asyncio.to_thread(memory.save_interaction, task, fallback)
 
     except Exception as e:
-        print(f"[Agent] ERROR: {e}")
+        error(f"ERROR: {e}")
         await manager.send_personal_message(
             json.dumps({"type": "error", "content": str(e)}), websocket
         )

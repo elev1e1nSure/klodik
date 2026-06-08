@@ -10,11 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import agent
 from config import settings
 from connection import manager
+from log import info, ws, error
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Sidecar starting...")
+    info("Sidecar starting...")
     task = asyncio.create_task(agent.initiative_loop())
     yield
     task.cancel()
@@ -22,7 +23,7 @@ async def lifespan(app: FastAPI):
         await task
     except asyncio.CancelledError:
         pass
-    print("Sidecar shutting down...")
+    info("Sidecar shutting down...")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -50,20 +51,20 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         await manager.connect(websocket)
         agent.current_websocket = websocket
-        print("[WS] Client connected")
+        ws("Client connected")
         try:
             while True:
                 try:
                     data = await websocket.receive_text()
                 except (RuntimeError, AssertionError):
                     break
-                print(f"[WS] Received: {data!r}")
+                ws(f"Received: {data!r}")
                 agent.last_activity = asyncio.get_event_loop().time()
                 try:
                     payload = json.loads(data)
                     if payload.get("type") == "task":
                         task = payload.get("content", "")
-                        print(f"[WS] Starting agent_loop with task: {task!r}")
+                        ws(f"Starting agent_loop with task: {task!r}")
                         if _current_task and not _current_task.done():
                             _current_task.cancel()
                             try:
@@ -76,13 +77,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         json.dumps({"type": "error", "content": "Invalid JSON"}), websocket
                     )
         except (WebSocketDisconnect, ConnectionResetError):
-            print("[WS] Client disconnected")
+            ws("Client disconnected")
         finally:
             manager.disconnect(websocket)
             if agent.current_websocket is websocket:
                 agent.current_websocket = None
     except Exception as e:
-        print(f"[WS] Unhandled error: {type(e).__name__}: {e}")
+        error(f"Unhandled WS error: {type(e).__name__}: {e}")
         try:
             manager.disconnect(websocket)
         except Exception:
