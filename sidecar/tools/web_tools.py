@@ -15,7 +15,7 @@ except ImportError:
 
 @tool(
     "google",
-    "Search Google and return top 5 result titles+urls",
+    "Search the web via DuckDuckGo and return top 5 result titles+urls",
     {
         "type": "object",
         "properties": {
@@ -31,8 +31,9 @@ def google(*, query: str) -> str:
         raise ToolError("beautifulsoup4 not installed")
 
     try:
+        # DuckDuckGo lite — more scraping-friendly than Google
         response = requests.get(
-            "https://www.google.com/search",
+            "https://duckduckgo.com/html/",
             params={"q": query},
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=10,
@@ -40,11 +41,21 @@ def google(*, query: str) -> str:
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         results: list[str] = []
-        for g in soup.select("div.g")[:5]:
-            title = g.select_one("h3")
-            link = g.select_one("a")
-            if title and link:
-                results.append(f"{title.get_text()}: {link.get('href', '')}")
+        for result in soup.select(".result")[:5]:
+            title = result.select_one(".result__a")
+            snippet = result.select_one(".result__snippet")
+            if title:
+                href = title.get("href", "")
+                # Clean DuckDuckGo redirect URLs
+                if href.startswith("//duckduckgo.com/l/?"):
+                    from urllib.parse import parse_qs, urlparse
+                    parsed = urlparse(href)
+                    qs = parse_qs(parsed.query)
+                    if "uddg" in qs:
+                        href = qs["uddg"][0]
+                results.append(f"{title.get_text()}: {href}")
+                if snippet:
+                    results.append(f"  {snippet.get_text()[:120]}...")
         return "\n".join(results) if results else "No results"
     except RequestException as e:
         raise ToolError(f"Network error: {e}")

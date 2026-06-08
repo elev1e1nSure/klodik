@@ -68,7 +68,7 @@ def _check_focus() -> str | None:
     """Return error message if Klodik window is focused."""
     try:
         active = pyautogui.getActiveWindow()
-        if active and "klodik" in active.title.lower():
+        if active is not None and hasattr(active, "title") and "klodik" in active.title.lower():
             return "Error: Klodik window is focused. Click another window first."
     except Exception:
         pass

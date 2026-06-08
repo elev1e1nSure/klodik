@@ -89,25 +89,32 @@ export default function Agent({ wsUrl = "ws://localhost:8765/ws" }: AgentProps) 
         </div>
       </form>
 
-      {/* Sprite */}
-      {isWorking ? (
-        <DotLottieReact
-          src="/claude_animated.lottie"
-          autoplay
-          loop
-          style={{ width: "166px", height: "166px" }}
-          className="image-pixelated"
-          data-tauri-drag-region
-        />
-      ) : (
+      {/* Sprite — Lottie всегда в DOM, скрывается через opacity */}
+      <div className="relative w-[166px] h-[166px]">
         <img
           src="/app-icon.png"
           alt="Клодик"
-          className={`w-[166px] image-pixelated ${isThinking ? "animate-agent-thinking" : "animate-agent-idle"}`}
+          className={`absolute inset-0 w-full h-full image-pixelated transition-opacity duration-300 ${
+            isWorking ? "opacity-0" : "opacity-100"
+          } ${isThinking ? "animate-agent-thinking" : "animate-agent-idle"}`}
           draggable={false}
           data-tauri-drag-region
         />
-      )}
+        <div
+          className={`absolute inset-0 transition-opacity duration-300 ${
+            isWorking ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          }`}
+        >
+          <DotLottieReact
+            src="/claude_animated.lottie"
+            autoplay
+            loop
+            style={{ width: "166px", height: "166px" }}
+            className="image-pixelated"
+            data-tauri-drag-region
+          />
+        </div>
+      </div>
     </div>
   );
 }

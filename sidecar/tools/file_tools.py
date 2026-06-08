@@ -19,10 +19,13 @@ def _sanitize_path(path: str) -> Path:
     """Resolve and validate a user-supplied path.
 
     Rejects empty paths and obvious system directories.
+    Expands ~ (home directory) and normalizes relative paths.
     """
     if not path or not str(path).strip():
         raise ToolError("Path cannot be empty")
 
+    # Expand ~ and normalize to absolute path
+    path = os.path.expanduser(path)
     resolved = Path(path).resolve()
 
     # Prevent writing into Windows system directories
@@ -135,7 +138,9 @@ def search(*, query: str, path: str = ".", by_content: bool = False) -> str:
             if len(matches) >= _MAX_SEARCH_RESULTS:
                 break
 
-        return "\n".join(matches) if matches else "No matches found"
+        if matches:
+            return f"Found {len(matches)} match{'es' if len(matches) > 1 else ''}:\n" + "\n".join(matches)
+        return "No matches found"
     except ToolError:
         raise
     except Exception as e:
@@ -175,13 +180,32 @@ def mkdir(*, path: str) -> str:
         "required": ["path"],
     },
 )
+def _format_size(size: int) -> str:
+    """Human-readable file size."""
+    for unit in ["B", "KB", "MB"]:
+        if size < 1024:
+            return f"{size:.0f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
 def list_dir(*, path: str = ".") -> str:
     try:
         target = _sanitize_path(path)
         if not target.is_dir():
             raise ToolError(f"Not a directory: {path}")
         items = os.listdir(target)
-        return "\n".join(items) if items else "(empty)"
+        if not items:
+            return "(empty)"
+        lines: list[str] = []
+        for item in sorted(items, key=str.lower):
+            full = target / item
+            if full.is_dir():
+                lines.append(f"📁 {item}/")
+            else:
+                size = full.stat().st_size
+                lines.append(f"📄 {item} — {_format_size(size)}")
+        return "\n".join(lines)
     except ToolError:
         raise
     except Exception as e:

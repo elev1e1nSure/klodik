@@ -37,6 +37,12 @@ def _open_command() -> str:
 )
 def terminal(*, command: str, cwd: str = ".") -> str:
     try:
+        # Normalize cwd: expand ~ and resolve to absolute path
+        cwd = os.path.expanduser(cwd)
+        cwd = os.path.abspath(cwd)
+        if not os.path.isdir(cwd):
+            return f"Error: directory does not exist: {cwd}"
+
         # Auto-silent for winget install to prevent interactive hangs
         if "winget install" in command and "--silent" not in command:
             command += " --silent --accept-package-agreements --accept-source-agreements"
@@ -55,7 +61,7 @@ def terminal(*, command: str, cwd: str = ".") -> str:
         err = result.stderr.strip()
         if result.returncode != 0:
             return f"Exit code {result.returncode}\n{out}\n{err}".strip()
-        return out or "(no output)"
+        return out or "Done (no output)"
     except subprocess.TimeoutExpired:
         raise ToolError(f"Command timed out after {_DEFAULT_TIMEOUT} seconds")
     except Exception as e:
@@ -77,7 +83,8 @@ def open_app(*, name: str) -> str:
     try:
         system = platform.system()
         if system == "Windows":
-            subprocess.Popen(f"start /b {name}", shell=True)
+            # Use 'cmd /c start "" <name>' to reliably launch without blocking
+            subprocess.Popen(["cmd", "/c", "start", "", name], shell=False)
         elif system == "Darwin":
             subprocess.Popen(["open", "-a", name])
         else:
@@ -103,7 +110,7 @@ def open_url(*, url: str) -> str:
     try:
         system = platform.system()
         if system == "Windows":
-            subprocess.Popen(f"start {url}", shell=True)
+            os.startfile(url)
         elif system == "Darwin":
             subprocess.Popen(["open", url])
         else:
@@ -138,6 +145,8 @@ def run_script(*, path: str, args: list[str] | None = None) -> str:
             [interpreter, path, *script_args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=_DEFAULT_TIMEOUT,
         )
         out = result.stdout.strip()
