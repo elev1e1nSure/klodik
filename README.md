@@ -29,6 +29,7 @@
 | 🧠 **Multi-model** | Groq, OpenAI, Gemini, Ollama — pick your provider |
 | 📝 **Memory** | SQLite database remembers recent conversations and preferences |
 | 🎬 **Animations** | Lottie animated sprite when working, idle pixel-art when chill |
+| 🪟 **Taskbar** | Visible in taskbar — easy to find and switch to |
 | 💬 **Initiative** | Gets bored and starts conversation himself after 60s of silence |
 
 ---

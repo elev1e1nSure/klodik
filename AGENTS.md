@@ -4,7 +4,7 @@
 
 **Клодик** — десктопный оверлей-агент (пиксельный персонаж), живущий прямо на рабочем столе Windows. Пользователь перетаскивает агента, задаёт задачи в текстовом поле, агент выполняет их через LLM с tool calling.
 
-Окно: прозрачное, без рамок, поверх всех окон (`alwaysOnTop`), не в таскбаре (`skipTaskbar`), квадратное 320×320 px. Перетаскивание через `data-tauri-drag-region`.
+Окно: прозрачное, без рамок, поверх всех окон (`alwaysOnTop`), видно в таскбаре (`skipTaskbar: false`), квадратное 320×320 px. Перетаскивание через `data-tauri-drag-region`.
 
 Агент отвечает **строго по-русски**, кратко (1–2 предложения), в стиле живого собеседника в мессенджере. Умеет инициировать разговор сам.
 
@@ -71,7 +71,7 @@
 4. Sidecar загружает последние 5 взаимодействий из `Memory`
 5. Отправляет статус `thinking` → вызывает Groq API с `tools`
 6. Если LLM вызывает tool → статус `working` → `execute_tool()` → результат обратно
-7. Максимум 5 итераций (`MAX_TOOL_ITERATIONS`)
+7. Максимум 30 итераций (`MAX_TOOL_ITERATIONS`)
 8. Финальный ответ → `{"type":"message"}` → сохраняется в `Memory` → статус `idle`
 
 ### Инициатива
@@ -129,7 +129,7 @@ klodik/
 │   ├── dev.cjs                   # Единый скрипт запуска sidecar + tauri
 │   └── launch.py                 # Красивый лаунчер с выбором провайдера и модели
 ├── public/
-│   ├── claude.png                # Статичный спрайт
+│   ├── app-icon.png              # Иконка / спрайт
 │   └── claude_animated.lottie   # Анимированный спрайт
 ├── AGENTS.md                     # Этот файл
 ├── README.md                     # Описание проекта (EN)
@@ -201,16 +201,9 @@ klodik/
 ## 9. Tauri / Rust правила
 
 - `tauri.conf.json` — валидировать после изменений
-- Окно: `transparent`, `decorations: false`, `skipTaskbar: true`, `alwaysOnTop: true`
+- Окно: `transparent`, `decorations: false`, `skipTaskbar: false`, `alwaysOnTop: true`
 - Поле `shadow` запрещено в Tauri v2 — не использовать
-- **Удаление border/shadow на Windows** — делается через Win32 API в `setup` хуке `lib.rs`:
-  - `SetWindowLongPtrW(GWL_STYLE)` — убирает `WS_BORDER/WS_DLGFRAME/WS_THICKFRAME`, оставляет `WS_POPUP`
-  - `SetWindowLongPtrW(GWL_EXSTYLE)` — добавляет `WS_EX_TOOLWINDOW`
-  - `DwmSetWindowAttribute(DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED)` — отключает DWM rendering
-  - `DwmSetWindowAttribute(DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE)` — убирает accent border
-  - `DwmSetWindowAttribute(DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND)` — убирает закругление
-  - `SetWindowPos(SWP_FRAMECHANGED)` — форсирует пересчёт рамки
-- **НЕЛЬЗЯ** возвращать `shadow` или любой другой border в конфиг или код
+- **Удаление тени** — `window.set_shadow(false)` в `setup` хуке `lib.rs` (нативный Tauri v2 API)
 
 ---
 
@@ -277,7 +270,7 @@ Sidecar использует **litellm** — единый интерфейс д�
 - **Temperature**: 0.7
 - **Max tokens**: 512 (краткие ответы)
 - **Промпт**: строго русский, живой стиль, 1–2 предложения, без корпоративщины
-- **MAX_TOOL_ITERATIONS = 5**
+- **MAX_TOOL_ITERATIONS = 30**
 - **Fallback**: если tool calling не сработал — просто текстовый ответ
 
 ---
